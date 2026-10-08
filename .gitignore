@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build outputs
+dist/
+build/
+frontend/dist/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+backend/.env
+
+# Artifacts (run-time generated)
+backend/artifacts/
+artifacts/
+test-results/
+playwright-report/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+*.tsbuildinfo
