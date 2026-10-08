@@ -21,8 +21,11 @@ class TestStep(BaseModel):
 
     @field_validator("target", "value", "expected", "reason", mode="before")
     @classmethod
-    def _empty_for_null(cls, v):
-        return "" if v is None else v
+    def _coerce_to_str(cls, v):
+        # Free models emit nulls and booleans in text fields.
+        if v is None or isinstance(v, bool):
+            return ""
+        return v if isinstance(v, str) else str(v)
 
 
 class TestPlan(BaseModel):
