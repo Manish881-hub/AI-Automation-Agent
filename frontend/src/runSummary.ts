@@ -32,6 +32,7 @@ export type StepResultView = {
   status: "passed" | "failed" | "error";
   message?: string;
   retried?: boolean;
+  recovered_from?: string;
 };
 
 export type RunView = {
@@ -117,6 +118,32 @@ export function getChecklist(run: RunView, events: string[]): CheckItem[] {
         }
       : { id: "debug", label: "debugger", state: "pending" },
   );
+
+  const results = run.results ?? [];
+  if (results.length > 0) {
+    const failed = results.filter((r) => r.status !== "passed");
+    items.push(
+      failed.length === 0
+        ? { id: "validation", label: "validation", state: "done" as CheckState }
+        : {
+            id: "validation", label: "validation", state: "fail" as CheckState,
+            detail: `${failed.length} failed`,
+          },
+    );
+  }
+  if (hasEvent(events, "recovery")) {
+    const recovered = results.filter((r) => r.retried && r.status === "passed");
+    items.push(
+      recovered.length > 0
+        ? {
+            id: "recovery", label: "recovery", state: "done" as CheckState,
+            detail: recovered
+              .map((r) => (r.recovered_from ? `'${r.recovered_from}' → retried` : "retried"))
+              .join("; "),
+          }
+        : { id: "recovery", label: "recovery", state: "fail" as CheckState },
+    );
+  }
 
   items.push(
     run.report
