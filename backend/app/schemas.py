@@ -13,6 +13,7 @@ class TestStep(BaseModel):
     target: str = ""
     value: str = ""
     expected: str = ""
+    assertion_type: Literal["text", "visible", "url", "title", "element", "no_console_error", "http_success"] | None = None
     reason: str = ""
 
 
@@ -34,6 +35,49 @@ class StepResult(BaseModel):
     status: Literal["passed", "failed", "error"]
     message: str
     evidence: TestEvidence | None = None
+    retried: bool = False
+
+
+class SnapshotLink(BaseModel):
+    text: str = ""
+    href: str = ""
+
+
+class SnapshotInput(BaseModel):
+    label: str = ""
+    name: str = ""
+    type: str = "text"
+    placeholder: str = ""
+
+
+class SnapshotForm(BaseModel):
+    action: str = ""
+    fields: list[str] = []
+
+
+class WebsiteSnapshot(BaseModel):
+    """Compact, interaction-focused page model from reconnaissance.
+
+    Deliberately NOT the DOM: only the targets a planner needs —
+    headings for orientation, buttons/links/inputs/forms for actions,
+    plus truncated visible text. Keeps LLM context small and plans grounded.
+    """
+
+    url: str = ""
+    title: str = ""
+    headings: list[str] = []
+    links: list[SnapshotLink] = []
+    buttons: list[str] = []
+    inputs: list[SnapshotInput] = []
+    forms: list[SnapshotForm] = []
+    visible_text: str = ""
+    screenshot: str | None = None
+
+
+class RecoveryDecision(BaseModel):
+    action: Literal["retry_alternate_target", "skip", "abort"]
+    target: str = ""
+    reason: str = ""
 
 
 class FailureAnalysis(BaseModel):
@@ -53,3 +97,4 @@ class TestRunResponse(BaseModel):
     results: list[StepResult] = []
     analysis: FailureAnalysis | None = None
     report: str | None = None
+    website: WebsiteSnapshot | None = None
