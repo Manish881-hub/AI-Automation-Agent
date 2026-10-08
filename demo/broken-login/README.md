@@ -23,7 +23,25 @@ curl -X POST http://localhost:8001/api/runs \
   }'
 ```
 
-## What to expect
+## Recovery drill (built into the page)
+
+The first load in a browser context shows **"Sign in"** — that is what
+reconnaissance snapshots and the planner targets. Every later load in
+the same context shows **"Log in"** (via a `sessionStorage` visit
+counter; each run launches a fresh browser profile, so this is
+deterministic, not timing-based).
+
+Expected trail on a real run:
+
+```text
+recon: website understood        <- snapshot says "Sign in"
+planner: N steps generated        <- plan clicks "Sign in"
+browser: step 4 failed            <- button is now "Log in"
+recovery: alternative found       <- synonym table: sign in ↔ log in
+browser: step 4 retried → passed
+```
+
+## What to expect (full run)
 
 ```text
 recon: website understood        <- finds Sign in, Email, Password, links

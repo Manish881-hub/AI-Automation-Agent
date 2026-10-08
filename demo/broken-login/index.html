@@ -35,6 +35,23 @@
   </div>
 </main>
 <script>
+  // RECOVERY DRILL: the first page load in a browser context shows
+  // "Sign in" (what reconnaissance snapshots and the planner targets),
+  // every later load shows "Log in". The plan therefore references a
+  // button that no longer exists at execution time, forcing the
+  // recovery agent to find the semantic equivalent and retry.
+  // (Playwright launches a fresh profile per run, so each run starts
+  // at visit 1 deterministically — no timers, no flakes.)
+  try {
+    const visits = (parseInt(sessionStorage.getItem('acme_visits') || '0', 10) || 0) + 1;
+    sessionStorage.setItem('acme_visits', String(visits));
+    if (visits >= 2) {
+      document.querySelector('#login-form button.primary').textContent = 'Log in';
+      document.title = 'Acme Portal — Log in';
+    }
+  } catch (e) { /* storage unavailable: keep original labels */ }
+</script>
+<script>
   // DELIBERATELY BROKEN: the auth endpoint does not exist on this static
   // server, so every sign-in fails with a 404 + console error. That is the
   // point: the agent must discover the form, attempt login, capture the
