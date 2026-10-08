@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     test_email: str = "test@example.com"
     test_password: str = "Test1234!"
+    # White-box fix loop: workspace the codebase tools may inspect.
+    # Writes apply only through the human approval gate.
+    workspace_root: str = "."
+    fix_enabled: bool = True
+    test_timeout_sec: int = 180
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
