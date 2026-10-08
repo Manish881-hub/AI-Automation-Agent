@@ -5,3 +5,4 @@ python-multipart==0.0.20
 httpx==0.28.1
 playwright==1.49.1
 openai==1.59.7
+pytest==8.3.4
