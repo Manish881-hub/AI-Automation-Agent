@@ -44,6 +44,14 @@ structured test plan. Targets must literally appear in the snapshot.
 Login credentials use `{{TEST_EMAIL}}` / `{{TEST_PASSWORD}}` placeholders
 resolved from server-side settings at fill time.
 
+### Plan validator (new in v0.2.1)
+Deterministic policy over LLM-proposed plans — the LLM proposes, this
+agent approves. Requires: navigate-first, assert-last, non-empty semantic
+targets, no destructive actions, a verifiable final condition that
+references the objective (never an error state). Rejections send the
+plan back for revision (max 2); unrepairable plans fail the run before
+any browser action. Records which assert steps verify the objective.
+
 ### Browser
 Executes only explicit browser actions through Playwright. Resolves
 semantic targets via role → label → text → placeholder → CSS fallback
@@ -66,6 +74,15 @@ Correlates failures with console and HTTP evidence and proposes a probable root 
 
 ### Reporter
 Converts the run state into an engineer-friendly report.
+
+## Execution status vs objective status (new in v0.2.1)
+
+Step success and business success are separate verdicts. The plan
+validator names the assert steps that verify the objective; the
+orchestrator sets `objective_status` from those steps alone. A fully
+executed plan can therefore report `EXECUTION 6/6` alongside
+`BUSINESS OBJECTIVE FAILED` — the report shows both, with observed
+evidence kept distinct from the labeled root-cause hypothesis.
 
 ## Shared execution state
 
