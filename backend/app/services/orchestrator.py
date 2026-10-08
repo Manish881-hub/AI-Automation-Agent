@@ -217,14 +217,14 @@ class Orchestrator:
                 "failure" if run.analysis.failed else "no remaining failure",
             )
             self._record(run, session, "reporter", "tool_call", "generate report")
-            run.report = reporter.run(run.results, run.analysis)
+            run.report = reporter.run(run.results, run.analysis, objective=run.objective)
             save_text(run.run_id, "report.md", run.report)
-            self._record(run, session, "reporter", "report_generated", run.status)
+            self._record(run, session, "reporter", "report_generated")
 
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
             run.status = "completed"
-            self._record(run, session, "orchestrator", "completed", run.status)
+            self._record(run, session, "orchestrator", "completed")
         except asyncio.TimeoutError:
             run.status = "failed"
             self._record(
