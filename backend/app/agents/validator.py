@@ -62,8 +62,16 @@ class ValidatorAgent:
     def _check_assertion(
         self, step: TestStep, evidence: TestEvidence, visible_check: bool | None
     ) -> StepResult:
+        from .plan_validator import _has_verifiable_condition
+
         atype = step.assertion_type or "text"
         expected = step.expected or ""
+        target = step.target or ""
+
+        # Defense in depth with the plan validator: an assertion with
+        # nothing to check would otherwise pass vacuously.
+        if not _has_verifiable_condition(step):
+            return self._fail(step, "assertion has no verifiable condition.", evidence)
 
         if atype == "visible" or atype == "element":
             # visible_check is probed by the browser agent (see
@@ -73,16 +81,18 @@ class ValidatorAgent:
             return self._passed(step, evidence)
 
         if atype == "url":
-            if expected.lower() not in (evidence.url or "").lower():
+            wanted = expected or target  # models sometimes put the URL in target
+            if wanted.lower() not in (evidence.url or "").lower():
                 return self._fail(
-                    step, f"Expected URL to contain {expected!r}, got {evidence.url!r}.", evidence,
+                    step, f"Expected URL to contain {wanted!r}, got {evidence.url!r}.", evidence,
                 )
             return self._passed(step, evidence)
 
         if atype == "title":
-            if expected.lower() not in (evidence.title or "").lower():
+            wanted = expected or target
+            if wanted.lower() not in (evidence.title or "").lower():
                 return self._fail(
-                    step, f"Expected title to contain {expected!r}, got {evidence.title!r}.",
+                    step, f"Expected title to contain {wanted!r}, got {evidence.title!r}.",
                     evidence,
                 )
             return self._passed(step, evidence)
@@ -100,9 +110,10 @@ class ValidatorAgent:
             return self._passed(step, evidence)
 
         # default "text": expected substring in page text or title
+        wanted = expected or target
         haystack = f"{evidence.text} {evidence.title}".lower()
-        if expected and expected.lower() not in haystack:
-            return self._fail(step, f"Expected {expected!r} not observed.", evidence)
+        if wanted and wanted.lower() not in haystack:
+            return self._fail(step, f"Expected {wanted!r} not observed.", evidence)
         return self._passed(step, evidence)
 
     @staticmethod
