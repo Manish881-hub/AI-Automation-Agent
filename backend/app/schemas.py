@@ -161,6 +161,21 @@ class FixProposal(BaseModel):
     test_targets: list[str] = []
 
 
+class Verification(BaseModel):
+    """Verdict of the post-fix browser re-test on the original objective.
+
+    pytest passing does not imply the customer workflow works — this
+    replays the approved plan against the patched app and judges the
+    same success assertions the objective verdict used.
+    """
+
+    verified: bool
+    objective_status: str = "unknown"
+    reason: str = ""
+    steps_passed: int = 0
+    steps_failed: int = 0
+
+
 class PlanValidation(BaseModel):
     """Deterministic verdict on whether a plan tests the objective.
 
@@ -244,3 +259,7 @@ class TestRunResponse(BaseModel):
     objective_status: str = "unknown"
     objective_reason: str = ""
     fix_status: str = "none"
+    fix_verify_summary: str = ""
+    fix_explanation: str = ""
+    fix_branch: str = ""
+    fix_diff: str = ""
