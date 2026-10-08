@@ -75,6 +75,35 @@ Correlates failures with console and HTTP evidence and proposes a probable root 
 ### Reporter
 Converts the run state into an engineer-friendly report.
 
+## White-box fix loop (new in v0.3)
+
+Black-box testing finds and diagnoses bugs; it cannot fix source it
+cannot see. When a run fails and `fix_enabled` is set, the orchestrator
+adds a second phase over a workspace root:
+
+```text
+debugger evidence
+  → codebase agent (deterministic search terms → files)
+  → fixer agent (unified diff as text, never touches disk)
+  → fix.patch + fix_proposal.md artifacts
+  → HUMAN APPROVAL (POST /api/runs/{id}/fix/approve|reject)
+  → branch fix/<run> → git apply → pytest → verified
+```
+
+Safety boundaries (non-negotiable):
+
+- Tools are confined to the workspace root; traversal raises.
+- Dependency, build, secret, and artifact paths are never read.
+- Secret-looking values are redacted before any LLM context.
+- The test runner executes pytest only — no shells, no network.
+- Nothing is applied without approval; rejection leaves zero trace.
+- `fix_status`: none → awaiting_approval → verified | tests_failed |
+  apply_failed | rejected, all in the session audit trail.
+
+Proven live against `demo/whitebox-todo` (KeyError on a missing
+gateway `transaction_id`): locate → minimal `.get()` patch → approve →
+pytest 2 passed → verified.
+
 ## Execution status vs objective status (new in v0.2.1)
 
 Step success and business success are separate verdicts. The plan
