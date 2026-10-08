@@ -27,6 +27,7 @@ async def get_run(run_id: str):
         results=run.results,
         analysis=run.analysis,
         report=run.report,
+        website=run.website,
     )
 
 

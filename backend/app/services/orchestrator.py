@@ -4,28 +4,48 @@ from uuid import uuid4
 from ..agents.planner import PlannerAgent
 from ..agents.browser_agent import BrowserAgent
 from ..agents.debugger import DebuggerAgent
+from ..agents.reconnaissance import ReconnaissanceAgent
+from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
-from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence
+from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
 from ..services.llm import LLM
 from ..tools.browser import BrowserTool
 from ..services.artifacts import run_dir, save_text
-from ..services.session import session_store
+from ..services.session import session_store, Session
 
 
 MAX_STEPS = 12
 PLANNER_TIMEOUT_SEC = 30
 STEP_TIMEOUT_SEC = 45
 RUN_TIMEOUT_SEC = 300
+RECON_TIMEOUT_SEC = 45
+RECOVERY_TIMEOUT_SEC = 30
+RECOVERY_MAX_ATTEMPTS = 1
 
 
 @dataclass
 class RunState:
+    """Shared execution state: every agent reads/writes its own slice.
+
+    recon       -> website
+    planner     -> plan
+    browser     -> results (via BrowserAgent), screenshots on disk
+    validator   -> StepResult verdicts inside results
+    recovery    -> retried results, failures notes
+    debugger    -> analysis
+    reporter    -> report
+    orchestrator-> status, events, memory (structured mirror of events)
+    """
+
     run_id: str
     url: str
     objective: str
     status: str = "queued"
+    website: WebsiteSnapshot | None = None
     plan: TestPlan | None = None
     results: list[StepResult] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+    memory: list[dict] = field(default_factory=list)
     analysis: FailureAnalysis | None = None
     report: str | None = None
     events: list[str] = field(default_factory=list)
@@ -41,33 +61,62 @@ class Orchestrator:
         self.runs[run.run_id] = run
         return run
 
+    @staticmethod
+    def _record(run: RunState, session: Session, agent: str, event: str, detail: str = "") -> None:
+        """One call writes the audit trail everywhere: timeline, memory, session."""
+        run.events.append(f"{agent}: {event}" + (f" {detail}" if detail else ""))
+        run.memory.append({"agent": agent, "event": event, "detail": detail})
+        session.record(agent, event, detail=detail)
+
     async def execute(self, run_id: str):
         run = self.runs[run_id]
         run.status = "running"
-        run.events.append("orchestrator: started")
         session = session_store.create(run.run_id)
-        session.record("orchestrator", "started", detail=run.objective)
+        self._record(run, session, "orchestrator", "started", run.objective)
+        recon_agent = ReconnaissanceAgent()
         planner = PlannerAgent()
         browser_agent = BrowserAgent()
+        recovery_agent = RecoveryAgent()
         debugger = DebuggerAgent()
         reporter = ReporterAgent()
         browser = BrowserTool()
 
         async def _run_pipeline():
-            run.events.append("planner: generating test plan")
-            session.record("planner", "tool_call", detail="generate test plan")
+            # --- reconnaissance: understand the page before planning ---
+            await browser.start()
+            self._record(run, session, "reconnaissance", "recon_started", run.url)
+            try:
+                recon_shot = str(run_dir(run.run_id) / "recon.png")
+                run.website = await asyncio.wait_for(
+                    recon_agent.run(browser, run.url, recon_shot),
+                    timeout=RECON_TIMEOUT_SEC,
+                )
+                save_text(run.run_id, "snapshot.json", run.website.model_dump_json(indent=2))
+                self._record(
+                    run, session, "reconnaissance", "website_understood",
+                    f"{len(run.website.buttons)} buttons, "
+                    f"{len(run.website.inputs)} inputs, "
+                    f"{len(run.website.links)} links",
+                )
+            except Exception as exc:
+                # Degraded mode: plan blind rather than fail outright.
+                run.website = None
+                self._record(run, session, "reconnaissance", "recon_failed", str(exc))
+
+            # --- planning, grounded in the snapshot when available ---
+            self._record(run, session, "planner", "tool_call", "generate test plan")
             run.plan = await asyncio.wait_for(
-                planner.run(self.llm, run.url, run.objective),
+                planner.run(self.llm, run.url, run.objective, website_context=run.website),
                 timeout=PLANNER_TIMEOUT_SEC,
             )
             save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
-            run.events.append(f"planner: generated {len(run.plan.steps)} steps")
-            session.record("planner", "decision", detail=f"{len(run.plan.steps)} steps")
+            self._record(run, session, "planner", "plan_generated", f"{len(run.plan.steps)} steps")
 
-            await browser.start()
+            # --- execute with recovery retries ---
             for step in run.plan.steps[:MAX_STEPS]:
-                run.events.append(f"browser: executing step {step.id} ({step.action})")
-                session.record("browser", "tool_call", detail=f"step {step.id} ({step.action})")
+                self._record(
+                    run, session, "browser", "step_started", f"step {step.id} ({step.action})",
+                )
                 screenshot = str(run_dir(run.run_id) / f"step_{step.id}.png")
                 try:
                     result = await asyncio.wait_for(
@@ -81,34 +130,105 @@ class Orchestrator:
                         message=f"step timed out after {STEP_TIMEOUT_SEC}s",
                         evidence=TestEvidence(),
                     )
-                run.results.append(result)
-                run.events.append(f"validator: step {step.id} -> {result.status}")
-                session.record("validator", "decision", detail=f"step {step.id} -> {result.status}")
+                attempts = 0
+                while (
+                    result.status != "passed"
+                    and attempts < RECOVERY_MAX_ATTEMPTS
+                    and step.action in ("click", "fill", "press")
+                ):
+                    attempts += 1
+                    self._record(
+                        run, session, "recovery", "recovery_decided",
+                        f"step {step.id}: {result.message}",
+                    )
+                    try:
+                        available = await asyncio.wait_for(
+                            browser.available_targets(),
+                            timeout=RECOVERY_TIMEOUT_SEC,
+                        )
+                        decision = await asyncio.wait_for(
+                            recovery_agent.run(self.llm, step, available, result.message),
+                            timeout=RECOVERY_TIMEOUT_SEC,
+                        )
+                    except asyncio.TimeoutError:
+                        from ..schemas import RecoveryDecision
 
-            run.events.append("debugger: analyzing results")
-            session.record("debugger", "tool_call", detail="analyze results")
+                        decision = RecoveryDecision(action="abort", reason="recovery timed out")
+                    if decision.action == "retry_alternate_target" and decision.target:
+                        self._record(
+                            run, session, "recovery", "recovery_retried",
+                            f"step {step.id} with {decision.target!r} ({decision.reason})",
+                        )
+                        retry_shot = str(run_dir(run.run_id) / f"step_{step.id}_retry{attempts}.png")
+                        retry_step = step.model_copy(
+                            update={
+                                "target": decision.target,
+                                "reason": f"{step.reason} [recovery: {decision.reason}]",
+                            }
+                        )
+                        try:
+                            result = await asyncio.wait_for(
+                                browser_agent.execute(browser, retry_step, retry_shot),
+                                timeout=STEP_TIMEOUT_SEC,
+                            )
+                            result = result.model_copy(update={"retried": True})
+                        except asyncio.TimeoutError:
+                            result = StepResult(
+                                step_id=step.id,
+                                status="error",
+                                message=f"recovery retry timed out after {STEP_TIMEOUT_SEC}s",
+                                evidence=TestEvidence(),
+                                retried=True,
+                            )
+                    elif decision.action == "abort":
+                        self._record(
+                            run, session, "recovery", "recovery_aborted",
+                            f"step {step.id}: {decision.reason}",
+                        )
+                        break
+                    else:  # skip: keep the failure, move to the next step
+                        self._record(
+                            run, session, "recovery", "recovery_skipped",
+                            f"step {step.id}: {decision.reason}",
+                        )
+                        break
+                run.results.append(result)
+                verdict = "step_passed" if result.status == "passed" else "step_failed"
+                self._record(
+                    run, session, "validator", verdict,
+                    f"step {step.id} -> {result.status}"
+                    + (" (retried)" if result.retried else ""),
+                )
+                if result.status != "passed":
+                    run.failures.append(f"Step {step.id}: {result.message}")
+
+            self._record(run, session, "debugger", "tool_call", "analyze results")
             run.analysis = await asyncio.wait_for(
                 debugger.run(self.llm, run.results),
                 timeout=PLANNER_TIMEOUT_SEC,
             )
-            run.events.append("reporter: generating report")
-            session.record("reporter", "tool_call", detail="generate report")
+            self._record(
+                run, session, "debugger", "analysis_completed",
+                "failure" if run.analysis.failed else "no remaining failure",
+            )
+            self._record(run, session, "reporter", "tool_call", "generate report")
             run.report = reporter.run(run.results, run.analysis)
             save_text(run.run_id, "report.md", run.report)
+            self._record(run, session, "reporter", "report_generated", run.status)
 
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
             run.status = "completed"
-            run.events.append("orchestrator: completed")
-            session.record("orchestrator", "completed", detail=run.status)
+            self._record(run, session, "orchestrator", "completed", run.status)
         except asyncio.TimeoutError:
             run.status = "failed"
-            run.events.append(f"orchestrator: run exceeded {RUN_TIMEOUT_SEC}s budget")
-            session.record("orchestrator", "timeout", detail=f"exceeded {RUN_TIMEOUT_SEC}s budget")
+            self._record(
+                run, session, "orchestrator", "timed_out",
+                f"exceeded {RUN_TIMEOUT_SEC}s budget",
+            )
         except Exception as exc:
             run.status = "failed"
-            run.events.append(f"orchestrator: fatal error: {exc}")
-            session.record("orchestrator", "fatal_error", detail=str(exc))
+            self._record(run, session, "orchestrator", "fatal_error", str(exc))
         finally:
             save_text(run.run_id, "events.log", "\n".join(run.events))
             try:
