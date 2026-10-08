@@ -10,6 +10,26 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Deterministic semantic equivalents: recovery without any LLM call.
+# Lookup is bidirectional — each tuple is one meaning, ordered so
+# alternates are tried in a stable, reviewable sequence.
+SYNONYM_GROUPS = [
+    ("sign in", "log in", "login", "log-in"),
+    ("signin", "login"),
+    ("create account", "sign up", "signup", "register"),
+    ("forgot password", "forgot password?", "reset password"),
+    ("submit", "continue", "next"),
+    ("search", "find"),
+]
+
+
+def _synonym_alternates(want: str) -> list[str]:
+    for group in SYNONYM_GROUPS:
+        if want in group:
+            return [g for g in group if g != want]
+    return []
+
+
 def suggest(step: TestStep, available: dict) -> RecoveryDecision | None:
     """Deterministic semantic-equivalent lookup — no LLM call.
 
@@ -44,8 +64,23 @@ def suggest(step: TestStep, available: dict) -> RecoveryDecision | None:
                 target=original,
                 reason=f"closest visible option for {step.target!r}",
             )
-    # 3. token overlap: "Sign in" ~ "Login" shares nothing -> skip,
-    #    but "Create account" ~ "Create new account" matches.
+    # 3. deterministic synonyms: "Sign in" ~ "Log in" regardless of model.
+    by_norm = {n: original for original, n in normed}
+    for alt in _synonym_alternates(want):
+        if alt in by_norm:
+            return RecoveryDecision(
+                action="retry_alternate_target",
+                target=by_norm[alt],
+                reason=f"synonym of {step.target!r}",
+            )
+        for n, original in by_norm.items():
+            if alt in n or n in alt:
+                return RecoveryDecision(
+                    action="retry_alternate_target",
+                    target=original,
+                    reason=f"synonym of {step.target!r}",
+                )
+    # 4. token overlap: "Create account" ~ "Create new account" matches.
     want_tokens = set(want.split())
     best: tuple[str, int] | None = None
     for original, n in normed:
