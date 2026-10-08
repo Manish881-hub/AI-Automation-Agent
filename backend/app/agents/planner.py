@@ -35,6 +35,31 @@ Rules:
             user = f"Website: {url}\nObjective: {objective}"
         return await llm.structured(system, user, TestPlan)
 
+    async def revise(
+        self,
+        llm: LLM,
+        url: str,
+        objective: str,
+        website_context: WebsiteSnapshot | None,
+        plan: TestPlan,
+        rejection_reasons: list[str],
+    ) -> TestPlan:
+        system = """You are a senior QA automation planner revising a rejected test plan.
+Return JSON matching the requested schema: the FULL corrected plan, at most 8 steps.
+Rules: start with navigate; end with an assert that verifies OBJECTIVE SUCCESS
+(a reachable page, element, or URL — never an error message or error state);
+targets must be semantic and taken from the website context; login credentials
+use {{TEST_EMAIL}} / {{TEST_PASSWORD}}."""
+        context = self._format_context(website_context) if website_context else "(none)"
+        user = (
+            f"Website: {url}\nObjective: {objective}\n\n"
+            f"Website context:\n{context}\n\n"
+            f"Rejected plan:\n{plan.model_dump_json()}\n\n"
+            f"Rejection reasons (fix every one):\n"
+            + "\n".join(f"- {r}" for r in rejection_reasons)
+        )
+        return await llm.structured(system, user, TestPlan)
+
     def _format_context(self, snapshot: WebsiteSnapshot) -> str:
         lines = [f"Title: {snapshot.title}"]
         if snapshot.headings:
