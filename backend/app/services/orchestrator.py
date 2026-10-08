@@ -5,6 +5,7 @@ from ..agents.planner import PlannerAgent
 from ..agents.plan_validator import PlanValidatorAgent
 from ..agents.codebase import CodebaseAgent
 from ..agents.fixer import FixerAgent
+from ..agents.verifier import VerifierAgent
 from ..agents.browser_agent import BrowserAgent
 from ..agents.debugger import DebuggerAgent
 from ..agents.reconnaissance import ReconnaissanceAgent
@@ -23,6 +24,7 @@ from ..services.session import session_store, Session
 MAX_STEPS = 12
 PLANNER_TIMEOUT_SEC = 120
 PLANNER_MAX_REVISIONS = 2
+MAX_FIX_ATTEMPTS = 2
 STEP_TIMEOUT_SEC = 60
 RUN_TIMEOUT_SEC = 600
 RECON_TIMEOUT_SEC = 60
@@ -63,6 +65,9 @@ class RunState:
     fix_explanation: str = ""
     fix_branch: str = ""
     fix_tests_output: str = ""
+    fix_attempts: int = 0
+    fix_base_commit: str = ""
+    fix_verify_summary: str = ""
     analysis: FailureAnalysis | None = None
     report: str | None = None
     events: list[str] = field(default_factory=list)
@@ -402,6 +407,7 @@ class Orchestrator:
             return
         run.fix_diff = proposal.diff
         run.fix_explanation = proposal.explanation
+        run.fix_base_commit = tool.base_commit()
         run.fix_status = "awaiting_approval"
         save_text(run.run_id, "fix.patch", proposal.diff)
         save_text(
@@ -411,7 +417,11 @@ class Orchestrator:
         )
 
     async def apply_fix(self, run_id: str) -> RunState:
-        """Human-approved: branch, apply patch, run tests, record verdict."""
+        """Human-approved: verify base, branch, apply, test, re-verify.
+
+        Bounded: a failed browser re-verification proposes again (new
+        approval) while attempts remain, then stops at verify_failed.
+        """
         run = self.runs.get(run_id)
         if run is None:
             raise KeyError(f"unknown run {run_id}")
@@ -423,32 +433,110 @@ class Orchestrator:
         run.fix_status = "applying"
         self._record(run, session, "fixer", "fix_approved", "applying on a new branch")
         try:
-            branch = f"fix/{run.run_id[:8]}"
+            if run.fix_base_commit:
+                current = tool.base_commit()
+                if current != run.fix_base_commit:
+                    raise RuntimeError(
+                        f"workspace moved since proposal "
+                        f"({current[:8] or 'none'} != {run.fix_base_commit[:8]}); refusing"
+                    )
+                if tool.has_tracked_changes():
+                    raise RuntimeError(
+                        "workspace has uncommitted tracked changes since proposal; refusing"
+                    )
+            suffix = "" if run.fix_attempts == 0 else f"-r{run.fix_attempts}"
+            branch = f"fix/{run.run_id[:8]}{suffix}"
             await asyncio.to_thread(tool.create_branch, branch)
             run.fix_branch = branch
             status = await asyncio.to_thread(tool.apply_patch, run.fix_diff)
             self._record(run, session, "fixer", "patch_applied", status[:200])
+            touched = tool.diff_paths(run.fix_diff)
+            if touched:
+                await asyncio.to_thread(
+                    tool.commit_files, touched,
+                    f"fix: agent patch for run {run.run_id[:8]}",
+                )
             result = await asyncio.to_thread(runner.run_pytest, [])
             run.fix_tests_output = result["output"]
             save_text(run.run_id, "fix_tests.log", result["output"])
-            if result["passed"]:
-                run.fix_status = "verified"
-                self._record(run, session, "test_runner", "tests_passed", "pytest green")
-            else:
+            if not result["passed"]:
                 run.fix_status = "tests_failed"
                 self._record(
                     run, session, "test_runner", "tests_failed",
                     f"exit {result['returncode']}",
                 )
+                return self._finish_fix(run)
+            self._record(run, session, "test_runner", "tests_passed", "pytest green")
+            verified, reason = await self._verify_fix(run, session)
+            run.fix_verify_summary = reason
+            if verified:
+                run.fix_status = "verified"
+                self._record(run, session, "verifier", "objective_verified", reason)
+                return self._finish_fix(run)
+            run.fix_verify_summary = reason
+            self._record(run, session, "verifier", "verify_failed", reason)
+            if run.fix_attempts + 1 < MAX_FIX_ATTEMPTS:
+                run.fix_attempts += 1
+                self._record(
+                    run, session, "fixer", "retrying_fix",
+                    f"attempt {run.fix_attempts + 1} of {MAX_FIX_ATTEMPTS}",
+                )
+                await self._propose_fix(run, session)
+                return self._finish_fix(run)
+            run.fix_status = "verify_failed"
+            return self._finish_fix(run)
         except Exception as exc:
             run.fix_status = "apply_failed"
             self._record(run, session, "fixer", "apply_failed", str(exc)[:300])
+            return self._finish_fix(run)
+
+    def _finish_fix(self, run: RunState) -> RunState:
         save_text(run.run_id, "events.log", "\n".join(run.events))
         try:
             session_store.persist(run.run_id)
         except Exception:
             pass
         return run
+
+    async def _verify_fix(self, run: RunState, session: Session) -> tuple[bool, str]:
+        """Replay the approved plan against the patched app: does the
+        original objective pass now? No LLM — deterministic re-execution."""
+        from ..agents.browser_agent import BrowserAgent
+        from ..agents.validator import ValidatorAgent
+
+        browser_agent = BrowserAgent()
+        validator = ValidatorAgent()
+        browser = BrowserTool()
+        results: list[StepResult] = []
+        self._record(run, session, "verifier", "tool_call", "re-test original objective")
+        try:
+            await browser.start()
+            for step in (run.plan.steps if run.plan else [])[:MAX_STEPS]:
+                shot = str(run_dir(run.run_id) / f"verify_step_{step.id}.png")
+                try:
+                    result = await asyncio.wait_for(
+                        browser_agent.execute(browser, step, shot),
+                        timeout=STEP_TIMEOUT_SEC,
+                    )
+                except asyncio.TimeoutError:
+                    result = StepResult(
+                        step_id=step.id, status="error",
+                        message=f"verify step timed out after {STEP_TIMEOUT_SEC}s",
+                        evidence=TestEvidence(),
+                    )
+                results.append(result)
+                self._record(
+                    run, session, "verifier", f"verify_step_{step.id}",
+                    f"-> {result.status}",
+                )
+        finally:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+        verdict = VerifierAgent().run(run.objective, run.success_step_ids, results)
+        save_text(run.run_id, "verify.json", verdict.model_dump_json(indent=2))
+        return verdict.verified, verdict.reason
 
     def reject_fix(self, run_id: str) -> RunState:
         run = self.runs.get(run_id)

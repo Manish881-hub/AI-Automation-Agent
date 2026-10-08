@@ -33,6 +33,10 @@ async def get_run(run_id: str):
         objective_status=run.objective_status,
         objective_reason=run.objective_reason,
         fix_status=run.fix_status,
+        fix_verify_summary=run.fix_verify_summary,
+        fix_explanation=run.fix_explanation,
+        fix_branch=run.fix_branch,
+        fix_diff=run.fix_diff,
     )
 
 

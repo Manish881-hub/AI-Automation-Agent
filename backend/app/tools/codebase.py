@@ -122,13 +122,55 @@ class CodebaseTool:
     # --- gated writes: called only after human approval upstream ---
 
     def apply_check(self, diff_text: str) -> tuple[bool, str]:
-        """Dry-run `git apply --check`. Mutates nothing."""
+        """Dry-run `git apply --check` with whitespace errors on. Mutates nothing."""
         proc = subprocess.run(
-            ["git", "apply", "--check", "-"], input=diff_text,
+            ["git", "apply", "--check", "--whitespace=error", "-"], input=diff_text,
             cwd=self.root, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
         )
         out = redact_secrets((proc.stdout + proc.stderr).strip()[-2000:])
         return proc.returncode == 0, out
+
+    def base_commit(self) -> str:
+        """HEAD sha the proposal was validated against ('' outside a repo)."""
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=self.root,
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            )
+            return proc.stdout.strip() if proc.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+
+    def has_tracked_changes(self) -> bool:
+        """True when tracked files differ from HEAD (untracked files ignored)."""
+        try:
+            proc = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=self.root,
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            )
+            return any(
+                line and not line.startswith("??")
+                for line in proc.stdout.splitlines()
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True  # fail closed: refuse when state is unknowable
+
+    def diff_paths(self, diff_text: str) -> list[str]:
+        return re.findall(r"^\+\+\+ b/(.+)$", diff_text, re.MULTILINE)
+
+    def commit_files(self, paths: list[str], message: str) -> str:
+        rels = [str(self._resolve(p).relative_to(self.root)) for p in paths]
+        subprocess.run(
+            ["git", "add", "--", *rels], cwd=self.root, check=True,
+            capture_output=True, timeout=GIT_TIMEOUT_SEC,
+        )
+        proc = subprocess.run(
+            ["git", "commit", "-m", message], cwd=self.root,
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(redact_secrets((proc.stdout + proc.stderr).strip()[-2000:]))
+        return self.base_commit()
 
     def create_branch(self, name: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9._/\-]+", name):
