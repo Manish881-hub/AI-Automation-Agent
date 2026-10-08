@@ -1,10 +1,15 @@
-from pathlib import Path
-from ..schemas import TestStep, StepResult, TestEvidence
+from ..schemas import TestStep, StepResult
 from ..tools.browser import BrowserTool
+from .validator import ValidatorAgent
 
 
 class BrowserAgent:
+    """Execute explicit browser actions; delegate verdicts to ValidatorAgent."""
+
     name = "browser"
+
+    def __init__(self) -> None:
+        self.validator = ValidatorAgent()
 
     async def execute(self, browser: BrowserTool, step: TestStep, screenshot_path: str) -> StepResult:
         try:
@@ -17,37 +22,15 @@ class BrowserAgent:
             elif step.action == "press":
                 await browser.press(step.target or "body", step.value)
             elif step.action == "assert":
-                observation = await browser.observe()
-                expected = step.expected.lower()
-                if expected not in observation.text.lower() and expected not in observation.title.lower():
-                    return StepResult(step_id=step.id, status="failed", message=f"Expected '{step.expected}' was not observed.", evidence=TestEvidence(url=observation.url, title=observation.title, text=observation.text, console_errors=observation.console_errors, network_errors=observation.network_errors))
+                pass  # no browser mutation; verdict comes from observation below
 
             observation = await browser.observe(screenshot_path)
-            return StepResult(
-                step_id=step.id,
-                status="passed",
-                message="Step completed successfully.",
-                evidence=TestEvidence(
-                    url=observation.url,
-                    title=observation.title,
-                    text=observation.text,
-                    console_errors=observation.console_errors,
-                    network_errors=observation.network_errors,
-                    screenshot=observation.screenshot_path,
-                ),
-            )
+            return self.validator.validate(step, observation)
         except Exception as exc:
-            observation = await browser.observe(screenshot_path)
-            return StepResult(
-                step_id=step.id,
-                status="error",
-                message=str(exc),
-                evidence=TestEvidence(
-                    url=observation.url,
-                    title=observation.title,
-                    text=observation.text,
-                    console_errors=observation.console_errors,
-                    network_errors=observation.network_errors,
-                    screenshot=observation.screenshot_path,
-                ),
-            )
+            # Guard observe(): a dead page must yield a step-level error,
+            # never an orchestrator-level crash (ECC error-handling).
+            try:
+                observation = await browser.observe(screenshot_path)
+            except Exception:
+                observation = None
+            return self.validator.validate(step, observation, step_error=str(exc))
