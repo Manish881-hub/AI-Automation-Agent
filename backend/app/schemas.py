@@ -1,10 +1,30 @@
 from typing import Literal
 from pydantic import AliasChoices, BaseModel, Field, HttpUrl, field_validator, model_validator
+import json
+import re
+
+_MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def normalize_url(url: str) -> str:
+    """Strip chat/markdown wrapping to a raw URL. Applied at the validation
+    boundary so internal state never holds anything but a raw URL — the
+    agent never guesses between `http://x` and `[http://x](http://x)`."""
+    url = url.strip()
+    match = _MARKDOWN_LINK.fullmatch(url)
+    if match:
+        url = match.group(2).strip()
+    return url
 
 
 class TestRunRequest(BaseModel):
     url: HttpUrl
     objective: str = Field(min_length=5, max_length=2000)
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, v):
+        return normalize_url(v) if isinstance(v, str) else v
 
 
 class TestStep(BaseModel):
@@ -142,6 +162,23 @@ class PlanValidation(BaseModel):
     success_step_ids: list[int] = []
 
 
+def _as_text(v) -> str:
+    """Coerce a model reply fragment to text (dicts become JSON, not crashes)."""
+    if v is None or isinstance(v, bool):
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
+
+
+def _as_list_of_text(v) -> list[str]:
+    if isinstance(v, list):
+        return [_as_text(i) or str(i) for i in v if i not in (None, "")]
+    return [_as_text(v)]
+
+
 class FailureAnalysis(BaseModel):
     failed: bool = True
     summary: str = ""
@@ -172,13 +209,13 @@ class FailureAnalysis(BaseModel):
             if failed is not None:
                 data["failed"] = failed
             if summary is not None:
-                data["summary"] = summary
+                data["summary"] = _as_text(summary)
             if cause is not None:
-                data["probable_root_cause"] = cause
+                data["probable_root_cause"] = _as_text(cause)
             if evidence is not None:
-                data["evidence"] = evidence if isinstance(evidence, list) else [str(evidence)]
+                data["evidence"] = _as_list_of_text(evidence)
             if actions is not None:
-                data["recommended_actions"] = actions if isinstance(actions, list) else [str(actions)]
+                data["recommended_actions"] = _as_list_of_text(actions)
         return data
 
 
