@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from uuid import uuid4
 from ..agents.planner import PlannerAgent
+from ..agents.plan_validator import PlanValidatorAgent
 from ..agents.browser_agent import BrowserAgent
 from ..agents.debugger import DebuggerAgent
 from ..agents.reconnaissance import ReconnaissanceAgent
@@ -16,6 +17,7 @@ from ..services.session import session_store, Session
 
 MAX_STEPS = 12
 PLANNER_TIMEOUT_SEC = 120
+PLANNER_MAX_REVISIONS = 2
 STEP_TIMEOUT_SEC = 60
 RUN_TIMEOUT_SEC = 600
 RECON_TIMEOUT_SEC = 60
@@ -46,6 +48,9 @@ class RunState:
     results: list[StepResult] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     memory: list[dict] = field(default_factory=list)
+    success_step_ids: list[int] = field(default_factory=list)
+    objective_status: str = "unknown"
+    objective_reason: str = ""
     analysis: FailureAnalysis | None = None
     report: str | None = None
     events: list[str] = field(default_factory=list)
@@ -117,6 +122,47 @@ class Orchestrator:
             save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
             self._record(run, session, "planner", "plan_generated", f"{len(run.plan.steps)} steps")
 
+            # --- plan validation: LLM proposes, deterministic policy approves ---
+            validator = PlanValidatorAgent()
+            validation = validator.validate(run.plan, run.objective, MAX_STEPS)
+            revisions = 0
+            while not validation.approved and revisions < PLANNER_MAX_REVISIONS:
+                self._record(
+                    run, session, "plan_validator", "plan_rejected",
+                    "; ".join(validation.reasons),
+                )
+                try:
+                    run.plan = await asyncio.wait_for(
+                        planner.revise(
+                            self.llm, run.url, run.objective, run.website,
+                            run.plan, validation.reasons,
+                        ),
+                        timeout=PLANNER_TIMEOUT_SEC,
+                    )
+                except asyncio.TimeoutError:
+                    raise RuntimeError(
+                        f"planner revision timed out after {PLANNER_TIMEOUT_SEC}s"
+                    )
+                revisions += 1
+                save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
+                validation = validator.validate(run.plan, run.objective, MAX_STEPS)
+                self._record(
+                    run, session, "plan_validator", "plan_repaired",
+                    f"attempt {revisions}: "
+                    + ("approved" if validation.approved else "; ".join(validation.reasons)),
+                )
+            if not validation.approved:
+                run.objective_status = "failed"
+                run.objective_reason = "plan rejected: " + "; ".join(validation.reasons)
+                self._record(run, session, "plan_validator", "plan_rejected_final",
+                             run.objective_reason)
+                raise RuntimeError(run.objective_reason)
+            run.success_step_ids = validation.success_step_ids
+            self._record(
+                run, session, "plan_validator", "plan_validated",
+                f"success via step(s) {run.success_step_ids}",
+            )
+
             # --- execute with recovery retries ---
             for step in run.plan.steps[:MAX_STEPS]:
                 self._record(
@@ -176,7 +222,10 @@ class Orchestrator:
                                 browser_agent.execute(browser, retry_step, retry_shot),
                                 timeout=STEP_TIMEOUT_SEC,
                             )
-                            result = result.model_copy(update={"retried": True})
+                            result = result.model_copy(update={
+                                "retried": True,
+                                "recovered_from": step.target,
+                            })
                         except asyncio.TimeoutError:
                             result = StepResult(
                                 step_id=step.id,
@@ -207,6 +256,32 @@ class Orchestrator:
                 if result.status != "passed":
                     run.failures.append(f"Step {step.id}: {result.message}")
 
+            # --- objective verdict: business success is not step success ---
+            by_id = {r.step_id: r for r in run.results}
+            success_results = [by_id[i] for i in run.success_step_ids if i in by_id]
+            if run.success_step_ids and all(r.status == "passed" for r in success_results):
+                run.objective_status = "passed"
+                run.objective_reason = (
+                    f"success assertion(s) {run.success_step_ids} passed"
+                )
+            else:
+                failed = [r for r in success_results if r.status != "passed"]
+                missing = [i for i in run.success_step_ids if i not in by_id]
+                run.objective_status = "failed"
+                if failed:
+                    run.objective_reason = (
+                        f"success assertion step {failed[0].step_id} "
+                        f"{failed[0].status}: {failed[0].message}"
+                    )
+                elif missing:
+                    run.objective_reason = f"success assertion step(s) {missing} never executed"
+                else:
+                    run.objective_reason = "no success assertion verified the objective"
+            self._record(
+                run, session, "objective", f"objective_{run.objective_status}",
+                run.objective_reason,
+            )
+
             self._record(run, session, "debugger", "tool_call", "analyze results")
             run.analysis = await asyncio.wait_for(
                 debugger.run(self.llm, run.results),
@@ -217,7 +292,11 @@ class Orchestrator:
                 "failure" if run.analysis.failed else "no remaining failure",
             )
             self._record(run, session, "reporter", "tool_call", "generate report")
-            run.report = reporter.run(run.results, run.analysis, objective=run.objective)
+            run.report = reporter.run(
+                run.results, run.analysis,
+                objective=run.objective, objective_status=run.objective_status,
+                objective_reason=run.objective_reason,
+            )
             save_text(run.run_id, "report.md", run.report)
             self._record(run, session, "reporter", "report_generated")
 

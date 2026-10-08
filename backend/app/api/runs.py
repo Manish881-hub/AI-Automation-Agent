@@ -28,6 +28,8 @@ async def get_run(run_id: str):
         analysis=run.analysis,
         report=run.report,
         website=run.website,
+        objective_status=run.objective_status,
+        objective_reason=run.objective_reason,
     )
 
 
