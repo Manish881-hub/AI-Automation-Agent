@@ -25,6 +25,11 @@ type Run = {
   website?: Website | null
   objective_status?: string
   objective_reason?: string
+  fix_status?: string
+  fix_explanation?: string
+  fix_branch?: string
+  fix_diff?: string
+  fix_verify_summary?: string
 }
 
 function App() {
@@ -33,6 +38,19 @@ function App() {
   const [run, setRun] = useState<Run | null>(null)
   const [events, setEvents] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [fixBusy, setFixBusy] = useState(false)
+
+  async function decideFix(decision: 'approve' | 'reject') {
+    if (!run) return
+    setFixBusy(true)
+    try {
+      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/fix/${decision}`), { method: 'POST' })
+      const data = await res.json()
+      setRun(prev => prev ? { ...prev, fix_status: data.fix_status, fix_branch: data.fix_branch ?? prev.fix_branch } : prev)
+    } finally {
+      setFixBusy(false)
+    }
+  }
 
   async function startRun(e: React.FormEvent) {
     e.preventDefault()
@@ -110,6 +128,22 @@ function App() {
         <div className="card"><h2>test results</h2>{run.results?.length ? run.results.map(r=><div className="result" key={r.step_id}><span className={r.status}>{r.status}</span><b>step {r.step_id}</b><span>{r.message}{r.retried ? ' (retried)' : ''}</span></div>) : <p>waiting for execution…</p>}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
+      {run.fix_status && run.fix_status !== 'none' && (
+        <section className="card fix" aria-label="proposed fix">
+          <h2>ai proposed fix</h2>
+          <p className="muted">status: {run.fix_status}{run.fix_branch ? ` · branch ${run.fix_branch}` : ''}</p>
+          {run.fix_explanation && <p><b>why</b> — {run.fix_explanation}</p>}
+          {run.fix_diff && <pre className="diff">{run.fix_diff}</pre>}
+          <p className="muted">verification: pytest, then browser re-test of the original objective</p>
+          {run.fix_status === 'awaiting_approval' && (
+            <div className="fix-actions">
+              <button onClick={() => decideFix('reject')} disabled={fixBusy}>reject</button>
+              <button onClick={() => decideFix('approve')} disabled={fixBusy}>{fixBusy ? 'working…' : 'approve fix'}</button>
+            </div>
+          )}
+          {run.fix_verify_summary && <p>{run.fix_verify_summary}</p>}
+        </section>
+      )}
       {run.report && <section className="card"><h2>report</h2><pre>{run.report}</pre></section>}
     </>}
   </main>

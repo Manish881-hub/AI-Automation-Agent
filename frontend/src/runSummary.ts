@@ -42,6 +42,7 @@ export type RunView = {
   analysis?: { failed?: boolean } | null;
   report?: string | null;
   website?: Website;
+  fix_status?: string;
 };
 
 export type CheckState = "done" | "fail" | "pending";
@@ -150,6 +151,19 @@ export function getChecklist(run: RunView, events: string[]): CheckItem[] {
       ? { id: "report", label: "report", state: "done" }
       : { id: "report", label: "report", state: "pending" },
   );
+
+  const fix = run.fix_status ?? "none";
+  if (fix !== "none") {
+    items.push(
+      fix === "verified"
+        ? { id: "fix", label: "fix", state: "done" as CheckState, detail: "applied and verified" }
+        : fix === "awaiting_approval"
+          ? { id: "fix", label: "fix", state: "pending" as CheckState, detail: "awaiting approval" }
+          : fix === "rejected"
+            ? { id: "fix", label: "fix", state: "pending" as CheckState, detail: "declined — not applied" }
+            : { id: "fix", label: "fix", state: "fail" as CheckState, detail: fix },
+    );
+  }
 
   return items;
 }
