@@ -149,6 +149,18 @@ class RecoveryDecision(BaseModel):
     reason: str = ""
 
 
+class FixProposal(BaseModel):
+    """LLM-proposed source fix: unified diff plus why and how to verify.
+
+    Produced as text only. Applying it requires human approval through
+    the fix gate; the diff is stored as fix.patch for review first.
+    """
+
+    diff: str = ""
+    explanation: str = ""
+    test_targets: list[str] = []
+
+
 class PlanValidation(BaseModel):
     """Deterministic verdict on whether a plan tests the objective.
 
@@ -231,3 +243,4 @@ class TestRunResponse(BaseModel):
     website: WebsiteSnapshot | None = None
     objective_status: str = "unknown"
     objective_reason: str = ""
+    fix_status: str = "none"
