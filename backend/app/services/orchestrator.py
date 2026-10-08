@@ -15,11 +15,11 @@ from ..services.session import session_store, Session
 
 
 MAX_STEPS = 12
-PLANNER_TIMEOUT_SEC = 30
-STEP_TIMEOUT_SEC = 45
-RUN_TIMEOUT_SEC = 300
-RECON_TIMEOUT_SEC = 45
-RECOVERY_TIMEOUT_SEC = 30
+PLANNER_TIMEOUT_SEC = 120
+STEP_TIMEOUT_SEC = 60
+RUN_TIMEOUT_SEC = 600
+RECON_TIMEOUT_SEC = 60
+RECOVERY_TIMEOUT_SEC = 60
 RECOVERY_MAX_ATTEMPTS = 1
 
 
@@ -105,10 +105,15 @@ class Orchestrator:
 
             # --- planning, grounded in the snapshot when available ---
             self._record(run, session, "planner", "tool_call", "generate test plan")
-            run.plan = await asyncio.wait_for(
-                planner.run(self.llm, run.url, run.objective, website_context=run.website),
-                timeout=PLANNER_TIMEOUT_SEC,
-            )
+            try:
+                run.plan = await asyncio.wait_for(
+                    planner.run(self.llm, run.url, run.objective, website_context=run.website),
+                    timeout=PLANNER_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                # Re-raise with the true stage so the outer handler cannot
+                # mislabel a slow free-tier model as a run-budget timeout.
+                raise RuntimeError(f"planner timed out after {PLANNER_TIMEOUT_SEC}s")
             save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
             self._record(run, session, "planner", "plan_generated", f"{len(run.plan.steps)} steps")
 
