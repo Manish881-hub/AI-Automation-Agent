@@ -1,21 +1,100 @@
 # Architecture notes
 
+## Execution flow (v0.2)
+
+```text
+website + business objective
+          ↓
+   reconnaissance            compact page model (buttons/links/inputs/forms)
+          ↓
+   website understanding     snapshot.json + recon.png
+          ↓
+      planner               grounded in snapshot, semantic targets only
+          ↓
+   executable plan           plan.json (≤8 steps, ≤12 executed)
+          ↓
+     browser agent           Playwright, deterministic locator chain
+          ↓
+     observation             screenshot + console + network evidence
+          ↓
+      validator             typed assertions (text/visible/url/title/...)
+          ↓
+       failure?
+      /       \
+    no         yes
+    ↓           ↓
+  next       recovery              alternate target → retry → validator
+  step          ↓
+             debugger             console + HTTP evidence → root cause
+                ↓
+             reporter             WHAT IT SAW / DID / WHY / RECOMMENDS
+```
+
 ## Agent responsibilities
 
+### Reconnaissance (new in v0.2)
+Opens the website first and extracts a compact interaction model —
+headings, buttons, links, inputs, forms, excerpted visible text. Never
+dumps the DOM into the LLM. Degraded mode: if recon fails, planning
+continues without context rather than failing the run.
+
 ### Planner
-Converts a business objective into a bounded structured test plan.
+Converts a business objective + website snapshot into a bounded
+structured test plan. Targets must literally appear in the snapshot.
+Login credentials use `{{TEST_EMAIL}}` / `{{TEST_PASSWORD}}` placeholders
+resolved from server-side settings at fill time.
 
 ### Browser
-Executes only explicit browser actions through Playwright.
+Executes only explicit browser actions through Playwright. Resolves
+semantic targets via role → label → text → placeholder → CSS fallback
+(fill steps prefer label/textbox-role/placeholder). The LLM never
+produces raw selectors.
 
 ### Validator
-Determines whether an observable expected condition was satisfied.
+Pure verdict function over observations. Typed assertions: `text`
+(default), `visible`, `url`, `title`, `element`, `no_console_error`,
+`http_success`.
+
+### Recovery (new in v0.2)
+One retry per failed click/fill/press step: deterministic
+semantic-equivalent lookup first (exact → contains → token overlap),
+LLM judgment only when nothing is close, safe abort default. Retried
+results are flagged `retried: true`.
 
 ### Debugger
 Correlates failures with console and HTTP evidence and proposes a probable root cause.
 
 ### Reporter
 Converts the run state into an engineer-friendly report.
+
+## Shared execution state
+
+`RunState` is the collaboration contract — each agent owns its slice:
+
+| Field | Writer |
+|---|---|
+| `website` | Reconnaissance |
+| `plan` | Planner |
+| `results` (+ screenshots) | Browser |
+| verdicts in `results` | Validator |
+| `retried` results, `failures` | Recovery |
+| `analysis` | Debugger |
+| `report` | Reporter |
+| `status`, `events`, `memory` | Orchestrator |
+
+Budgets: `MAX_STEPS = 12`, planner/recon/recovery timeouts plus a
+run-level wall-clock budget — every run terminates.
+
+## Session audit
+
+Every agent event is recorded three ways via
+`Orchestrator._record`: the polling timeline (`events`), structured
+`memory` on the run, and the persisted `session.json`
+(`artifacts/<run_id>/session.json`). Verbs: `recon_started`,
+`website_understood`, `plan_generated`, `step_started`,
+`step_passed` / `step_failed`, `recovery_decided` / `recovery_retried` /
+`recovery_skipped` / `recovery_aborted`, `analysis_completed`,
+`report_generated`. Persisted in `finally`, so failed runs keep their trail.
 
 ## State model
 
@@ -28,16 +107,17 @@ A production version should persist:
 - artifact
 - failure
 
-The current MVP uses in-memory state intentionally so the core autonomous loop can be demonstrated first.
+The current version uses in-memory run state intentionally so the core autonomous loop can be demonstrated first.
 
 ## Safety boundaries
 
-The browser agent should eventually enforce:
+Enforced now: timeouts, max steps, seeded demo credentials (never
+production logins), `.env` secrets never committed.
+
+Still to enforce:
 
 - allowed domains
 - action allowlists
-- timeouts
-- max steps
 - maximum token/context budget
 - destructive-action approval
 - secret redaction
