@@ -32,7 +32,37 @@ async def get_run(run_id: str):
         website=run.website,
         objective_status=run.objective_status,
         objective_reason=run.objective_reason,
+        fix_status=run.fix_status,
     )
+
+
+@router.post("/{run_id}/fix/approve")
+async def approve_fix(run_id: str):
+    """Human approval gate: apply the proposed patch on a branch and test it."""
+    try:
+        run = await orchestrator.apply_fix(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {
+        "run_id": run.run_id,
+        "fix_status": run.fix_status,
+        "fix_branch": run.fix_branch,
+        "fix_explanation": run.fix_explanation,
+    }
+
+
+@router.post("/{run_id}/fix/reject")
+async def reject_fix(run_id: str):
+    """Human declines the proposed patch; it is never applied."""
+    try:
+        run = orchestrator.reject_fix(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"run_id": run.run_id, "fix_status": run.fix_status}
 
 
 @router.get("/{run_id}/events")

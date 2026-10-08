@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 from ..agents.planner import PlannerAgent
 from ..agents.plan_validator import PlanValidatorAgent
+from ..agents.codebase import CodebaseAgent
+from ..agents.fixer import FixerAgent
 from ..agents.browser_agent import BrowserAgent
 from ..agents.debugger import DebuggerAgent
 from ..agents.reconnaissance import ReconnaissanceAgent
@@ -10,7 +12,10 @@ from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
 from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
 from ..services.llm import LLM
+from ..config import settings
 from ..tools.browser import BrowserTool
+from ..tools.codebase import CodebaseTool
+from ..tools.testrunner import TestRunnerTool
 from ..services.artifacts import run_dir, save_text
 from ..services.session import session_store, Session
 
@@ -51,6 +56,13 @@ class RunState:
     success_step_ids: list[int] = field(default_factory=list)
     objective_status: str = "unknown"
     objective_reason: str = ""
+    # White-box fix loop. fix_status: none -> proposed (awaiting human
+    # approval) -> approved/applying -> verified | apply_failed | rejected.
+    fix_status: str = "none"
+    fix_diff: str = ""
+    fix_explanation: str = ""
+    fix_branch: str = ""
+    fix_tests_output: str = ""
     analysis: FailureAnalysis | None = None
     report: str | None = None
     events: list[str] = field(default_factory=list)
@@ -300,6 +312,14 @@ class Orchestrator:
             save_text(run.run_id, "report.md", run.report)
             self._record(run, session, "reporter", "report_generated")
 
+            # --- white-box fix loop: propose a patch, wait for a human ---
+            if (
+                settings.fix_enabled
+                and run.analysis is not None
+                and run.analysis.failed
+            ):
+                await self._propose_fix(run, session)
+
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
             run.status = "completed"
@@ -323,6 +343,124 @@ class Orchestrator:
                 await browser.close()
             except Exception:
                 pass
+
+    async def _propose_fix(self, run: RunState, session: Session) -> None:
+        """Diagnose code, propose a diff, and park for human approval.
+
+        Read-only against the workspace. The only write here is the
+        fix.patch artifact for review — applying it requires the
+        approve endpoint.
+        """
+        codebase_agent = CodebaseAgent()
+        fixer = FixerAgent()
+        tool = CodebaseTool(settings.workspace_root)
+        self._record(run, session, "codebase", "tool_call", "locate failure code")
+        try:
+            context = await asyncio.wait_for(
+                asyncio.to_thread(
+                    codebase_agent.investigate, tool, run.results, run.analysis
+                ),
+                timeout=RECOVERY_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            self._record(run, session, "codebase", "investigate_failed", "search timed out")
+            return
+        files = list(context.get("files", {}))
+        self._record(
+            run, session, "codebase", "code_located",
+            ", ".join(files) if files else "no files located",
+        )
+        if not files:
+            return
+        failure_summary = (
+            (run.analysis.summary or "")
+            + "\n"
+            + (run.analysis.probable_root_cause or "")
+        )[:4000]
+        self._record(run, session, "fixer", "tool_call", "propose patch")
+        try:
+            proposal = await asyncio.wait_for(
+                fixer.propose(self.llm, failure_summary, context),
+                timeout=PLANNER_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            self._record(run, session, "fixer", "propose_failed", "LLM timed out")
+            return
+        except Exception as exc:
+            self._record(run, session, "fixer", "propose_failed", str(exc)[:300])
+            return
+        if not proposal.diff.strip():
+            self._record(run, session, "fixer", "propose_failed", "empty diff")
+            return
+        ok, check_out = await asyncio.to_thread(tool.apply_check, proposal.diff)
+        self._record(
+            run, session, "fixer", "fix_proposed",
+            f"applies cleanly: {ok}; awaiting human approval",
+        )
+        if not ok:
+            self._record(run, session, "fixer", "propose_failed", check_out[:300])
+            return
+        run.fix_diff = proposal.diff
+        run.fix_explanation = proposal.explanation
+        run.fix_status = "awaiting_approval"
+        save_text(run.run_id, "fix.patch", proposal.diff)
+        save_text(
+            run.run_id, "fix_proposal.md",
+            "## Proposed fix\n\n" + proposal.explanation + "\n\n"
+            f"Verify with: `python -m pytest {' '.join(proposal.test_targets) or '-q'}`\n",
+        )
+
+    async def apply_fix(self, run_id: str) -> RunState:
+        """Human-approved: branch, apply patch, run tests, record verdict."""
+        run = self.runs.get(run_id)
+        if run is None:
+            raise KeyError(f"unknown run {run_id}")
+        if run.fix_status != "awaiting_approval":
+            raise ValueError(f"fix is {run.fix_status}, not awaiting approval")
+        session = session_store.get(run.run_id) or session_store.create(run.run_id)
+        tool = CodebaseTool(settings.workspace_root)
+        runner = TestRunnerTool(settings.workspace_root, timeout=settings.test_timeout_sec)
+        run.fix_status = "applying"
+        self._record(run, session, "fixer", "fix_approved", "applying on a new branch")
+        try:
+            branch = f"fix/{run.run_id[:8]}"
+            await asyncio.to_thread(tool.create_branch, branch)
+            run.fix_branch = branch
+            status = await asyncio.to_thread(tool.apply_patch, run.fix_diff)
+            self._record(run, session, "fixer", "patch_applied", status[:200])
+            result = await asyncio.to_thread(runner.run_pytest, [])
+            run.fix_tests_output = result["output"]
+            save_text(run.run_id, "fix_tests.log", result["output"])
+            if result["passed"]:
+                run.fix_status = "verified"
+                self._record(run, session, "test_runner", "tests_passed", "pytest green")
+            else:
+                run.fix_status = "tests_failed"
+                self._record(
+                    run, session, "test_runner", "tests_failed",
+                    f"exit {result['returncode']}",
+                )
+        except Exception as exc:
+            run.fix_status = "apply_failed"
+            self._record(run, session, "fixer", "apply_failed", str(exc)[:300])
+        save_text(run.run_id, "events.log", "\n".join(run.events))
+        try:
+            session_store.persist(run.run_id)
+        except Exception:
+            pass
+        return run
+
+    def reject_fix(self, run_id: str) -> RunState:
+        run = self.runs.get(run_id)
+        if run is None:
+            raise KeyError(f"unknown run {run_id}")
+        if run.fix_status != "awaiting_approval":
+            raise ValueError(f"fix is {run.fix_status}, not awaiting approval")
+        run.fix_status = "rejected"
+        session = session_store.get(run.run_id) or session_store.create(run.run_id)
+        self._record(run, session, "fixer", "fix_rejected", "human declined the patch")
+        save_text(run.run_id, "events.log", "\n".join(run.events))
+        return run
 
 
 orchestrator = Orchestrator()
