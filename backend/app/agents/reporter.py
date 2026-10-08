@@ -3,7 +3,12 @@ from ..schemas import FailureAnalysis, StepResult
 
 class ReporterAgent:
     """Render the evidence-backed report: observed facts first,
-    agent hypothesis clearly labeled as such, never blended."""
+    agent hypothesis clearly labeled as such, never blended.
+
+    Execution status (did the steps run?) and objective status (did the
+    client's business goal succeed?) are reported as separate verdicts —
+    a fully-executed plan can still fail the business objective.
+    """
 
     name = "reporter"
 
@@ -12,10 +17,13 @@ class ReporterAgent:
         results: list[StepResult],
         analysis: FailureAnalysis,
         objective: str = "",
+        objective_status: str = "unknown",
+        objective_reason: str = "",
     ) -> str:
         passed = sum(r.status == "passed" for r in results)
         failed = len(results) - passed
         failed_steps = [r for r in results if r.status != "passed"]
+        recovered = [r for r in results if r.retried and r.status == "passed"]
 
         console: list[str] = []
         network: list[str] = []
@@ -38,14 +46,21 @@ class ReporterAgent:
         else:
             confidence = "low"
 
+        status_word = objective_status.upper() if objective_status != "unknown" else "UNKNOWN"
         lines = [
             "# AI Test Automation Report",
             "",
-            f"**Result:** {'FAILED' if analysis.failed else 'PASSED'}",
-            f"**Steps:** {passed} passed / {failed} failed",
-            f"**Confidence:** {confidence}",
+            "## EXECUTION",
             "",
+            f"{passed} passed / {failed} failed",
+            "",
+            "## BUSINESS OBJECTIVE",
+            "",
+            status_word,
         ]
+        if objective_reason:
+            lines.append(objective_reason)
+        lines += [""]
         if objective:
             lines += ["## Expected", "", objective, ""]
         lines += ["## Observed evidence", ""]
@@ -60,11 +75,20 @@ class ReporterAgent:
             lines += ["", "### Network"] + [f"- {n}" for n in network[:10]]
         if screenshots:
             lines += ["", "### Screenshots"] + [f"- {s}" for s in screenshots]
+        if recovered:
+            lines += ["", "## Recovery"] + [
+                f"- Step {r.step_id}: {r.recovered_from!r} → retried target passed"
+                for r in recovered
+            ]
         lines += [
             "",
             "## Probable cause (agent hypothesis, not observed fact)",
             "",
             analysis.probable_root_cause,
+            "",
+            "## Confidence",
+            "",
+            confidence,
             "",
             "## Recommended actions",
             "",
