@@ -25,4 +25,14 @@ class DebuggerAgent:
 
         prompt = "\n".join(evidence)[-12000:]
         system = """You are a senior production debugging engineer. Analyze failed browser-test evidence. Do not invent facts. Distinguish observed evidence from hypotheses. Return JSON matching the requested schema."""
-        return await llm.structured(system, prompt, FailureAnalysis)
+        analysis = await llm.structured(system, prompt, FailureAnalysis)
+        # Cheap models often leave evidence/summary blank even when the
+        # diagnosis is right — backfill from what was actually observed so
+        # the report never says "no failure evidence" after real failures.
+        if not analysis.evidence:
+            analysis = analysis.model_copy(update={"evidence": evidence[:10]})
+        if not analysis.summary:
+            analysis = analysis.model_copy(
+                update={"summary": f"{len(failed)} of {len(results)} steps failed."}
+            )
+        return analysis
