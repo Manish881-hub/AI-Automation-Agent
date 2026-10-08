@@ -22,13 +22,18 @@ MAX_RESULTS = 20
 MAX_SEARCH_BYTES = 200_000
 GIT_TIMEOUT_SEC = 30
 
-_SECRET_RE = re.compile(
-    r"(?i)(api[_-]?key|secret|token|password|passwd|pwd)\s*([:=])\s*(\S+)"
+# Redact only token-shaped values (long randoms, known prefixes), never
+# plain identifiers. An aggressive key=value regex would mangle source
+# code (e.g. `password: str` annotations), which is worse than useless
+# when the agent must read that code to fix it.
+_TOKENISH_RE = re.compile(
+    r"(sk-[A-Za-z0-9\-_]{8,}|xox[bpas]-[A-Za-z0-9\-]+|gh[pouse]_[A-Za-z0-9_]+"
+    r"|ya29\.[A-Za-z0-9\-_]+|AKIA[0-9A-Z]{16}|[A-Za-z0-9_\-/+]{32,}={0,2})"
 )
 
 
 def redact_secrets(text: str) -> str:
-    return _SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", text)
+    return _TOKENISH_RE.sub("<redacted>", text)
 
 
 def _denied(path: Path) -> bool:
