@@ -23,6 +23,8 @@ type Run = {
   analysis?: any
   report?: string
   website?: Website | null
+  objective_status?: string
+  objective_reason?: string
 }
 
 function App() {
@@ -75,6 +77,12 @@ function App() {
     </section>
 
     {run && <>
+      {run.objective_status && run.objective_status !== 'unknown' && (
+        <section className={`card objective ${run.objective_status}`}>
+          <h2>business objective: {run.objective_status}</h2>
+          {run.objective_reason && <p>{run.objective_reason}</p>}
+        </section>
+      )}
       <section className="grid">
         <div className="card">
           <h2>website understanding</h2>

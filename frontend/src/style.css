@@ -29,5 +29,8 @@ button:disabled { opacity:.5; }
 .checklist li.done span:first-child { color:#167c3a; }
 .checklist li.fail span:first-child { color:#b42318; }
 .checklist li.pending span:first-child { color:#888; }
+.objective h2 { text-transform:uppercase; }
+.objective.passed { border-left:6px solid #167c3a; }
+.objective.failed { border-left:6px solid #b42318; }
 pre { white-space:pre-wrap; background:#111; color:#eee; padding:18px; border-radius:12px; overflow:auto; }
 @media(max-width:800px){ .grid{grid-template-columns:1fr;} h1{font-size:32px;} }
