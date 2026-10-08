@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Acme Portal — Sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f4f1; margin: 0; }
+  main { max-width: 420px; margin: 80px auto; background: #fff; border: 1px solid #ddd;
+         border-radius: 16px; padding: 32px; box-shadow: 0 8px 32px rgba(0,0,0,.06); }
+  h1 { margin: 0 0 4px; } p.sub { color: #666; margin-top: 0; }
+  label { display: grid; gap: 6px; font-weight: 600; margin: 14px 0; }
+  input { padding: 10px; border: 1px solid #bbb; border-radius: 8px; font: inherit; }
+  button { padding: 12px; border: 0; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; }
+  button.primary { background: #171717; color: #fff; width: 100%; }
+  button.ghost { background: transparent; text-decoration: underline; color: #444; }
+  .row { display: flex; justify-content: space-between; margin-top: 12px; }
+  #error { display: none; background: #fdecea; color: #8f1d16; border: 1px solid #f5c6c0;
+           border-radius: 8px; padding: 10px 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Welcome back</h1>
+  <p class="sub">Sign in to reach your dashboard.</p>
+  <form id="login-form">
+    <label>Email<input name="email" type="email" placeholder="you@company.com" autocomplete="username" /></label>
+    <label>Password<input name="password" type="password" placeholder="••••••••" autocomplete="current-password" /></label>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+  <div id="error" role="alert"></div>
+  <div class="row">
+    <button class="ghost" type="button" id="forgot">Forgot password?</button>
+    <button class="ghost" type="button" id="signup">Create account</button>
+  </div>
+</main>
+<script>
+  // RECOVERY DRILL (same as broken-login): first load shows "Sign in",
+  // later loads in the same browser context show "Log in".
+  try {
+    const visits = (parseInt(sessionStorage.getItem('acme_visits') || '0', 10) || 0) + 1;
+    sessionStorage.setItem('acme_visits', String(visits));
+    if (visits >= 2) {
+      document.querySelector('#login-form button.primary').textContent = 'Log in';
+      document.title = 'Acme Portal — Log in';
+    }
+  } catch (e) { /* keep original labels */ }
+</script>
+<script>
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const box = document.getElementById('error');
+    box.style.display = 'none';
+    const form = new FormData(e.target);
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: form.get('email'), password: form.get('password')}),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || ('login returned ' + res.status));
+      window.location.href = '/dashboard';
+    } catch (err) {
+      console.error('login failed: ' + err.message);
+      box.textContent = 'Sign in failed — ' + err.message;
+      box.style.display = 'block';
+    }
+  });
+  document.getElementById('forgot').addEventListener('click', () => {
+    const box = document.getElementById('error');
+    box.textContent = 'Password reset is not implemented in this demo.';
+    box.style.display = 'block';
+  });
+  document.getElementById('signup').addEventListener('click', () => {
+    const box = document.getElementById('error');
+    box.textContent = 'Self-service signup is disabled in this demo.';
+    box.style.display = 'block';
+  });
+</script>
+</body>
+</html>
