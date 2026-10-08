@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
     artifact_dir: str = "./artifacts"
     cors_origins: str = "http://localhost:5173"
+    test_email: str = "test@example.com"
+    test_password: str = "Test1234!"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
