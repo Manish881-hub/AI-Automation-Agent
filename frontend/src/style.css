@@ -21,5 +21,13 @@ button:disabled { opacity:.5; }
 .result { display:grid; grid-template-columns:80px 70px 1fr; gap:10px; padding:12px 0; border-bottom:1px solid #eee; align-items:center; }
 .result span:first-child { font-size:11px; font-weight:800; text-transform:uppercase; }
 .passed { color:#167c3a; }.failed,.error { color:#b42318; }
+.muted { color:#666; font-size:13px; }
+.snap-list { margin:4px 0 12px 18px; padding:0; font-size:14px; display:grid; gap:4px; }
+.checklist { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.checklist li { display:flex; gap:10px; align-items:baseline; padding:9px 10px; background:#f5f5f2; border-radius:8px; font-size:14px; }
+.checklist li span:first-child { font-weight:800; }
+.checklist li.done span:first-child { color:#167c3a; }
+.checklist li.fail span:first-child { color:#b42318; }
+.checklist li.pending span:first-child { color:#888; }
 pre { white-space:pre-wrap; background:#111; color:#eee; padding:18px; border-radius:12px; overflow:auto; }
 @media(max-width:800px){ .grid{grid-template-columns:1fr;} h1{font-size:32px;} }

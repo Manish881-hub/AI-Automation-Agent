@@ -2,6 +2,16 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
 import { apiUrl } from './api'
+import { getChecklist, inputLabel, linkText } from './runSummary'
+
+type Website = {
+  url: string
+  title: string
+  headings: string[]
+  links: Array<string | { text?: string; href?: string }>
+  buttons: string[]
+  inputs: Array<{ label?: string; name?: string; type?: string; placeholder?: string }>
+}
 
 type Run = {
   run_id: string
@@ -12,6 +22,7 @@ type Run = {
   results: any[]
   analysis?: any
   report?: string
+  website?: Website | null
 }
 
 function App() {
@@ -65,8 +76,30 @@ function App() {
 
     {run && <>
       <section className="grid">
+        <div className="card">
+          <h2>website understanding</h2>
+          <p className="muted">observed by reconnaissance before planning</p>
+          {run.website ? <>
+            <p><b>{run.website.title}</b></p>
+            {!!run.website.buttons?.length && <><h3>buttons</h3><ul className="snap-list">{run.website.buttons.map((b,i)=><li key={i}>{b}</li>)}</ul></>}
+            {!!run.website.inputs?.length && <><h3>inputs</h3><ul className="snap-list">{run.website.inputs.map((x,i)=><li key={i}>{inputLabel(x)}</li>)}</ul></>}
+            {!!run.website.links?.length && <><h3>links</h3><ul className="snap-list">{run.website.links.map((x,i)=><li key={i}>{linkText(x)}</li>)}</ul></>}
+          </> : <p>reconnaissance pending…</p>}
+        </div>
+        <div className="card">
+          <h2>agent execution</h2>
+          <ul className="checklist">
+            {getChecklist(run, events).map(item => <li key={item.id} className={item.state}>
+              <span aria-hidden="true">{item.state === 'done' ? '✓' : item.state === 'fail' ? '✕' : '…'}</span>
+              <span>{item.label}</span>
+              {item.detail && <span className="muted">{item.detail}</span>}
+            </li>)}
+          </ul>
+        </div>
+      </section>
+      <section className="grid">
         <div className="card"><h2>agent timeline</h2><div className="timeline">{events.map((x,i)=><div key={i}>{x}</div>)}</div></div>
-        <div className="card"><h2>test results</h2>{run.results?.length ? run.results.map(r=><div className="result" key={r.step_id}><span className={r.status}>{r.status}</span><b>step {r.step_id}</b><span>{r.message}</span></div>) : <p>waiting for execution…</p>}</div>
+        <div className="card"><h2>test results</h2>{run.results?.length ? run.results.map(r=><div className="result" key={r.step_id}><span className={r.status}>{r.status}</span><b>step {r.step_id}</b><span>{r.message}{r.retried ? ' (retried)' : ''}</span></div>) : <p>waiting for execution…</p>}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
       {run.report && <section className="card"><h2>report</h2><pre>{run.report}</pre></section>}
