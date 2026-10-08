@@ -84,6 +84,7 @@ class StepResult(BaseModel):
     message: str
     evidence: TestEvidence | None = None
     retried: bool = False
+    recovered_from: str = ""
 
 
 class SnapshotLink(BaseModel):
@@ -126,6 +127,19 @@ class RecoveryDecision(BaseModel):
     action: Literal["retry_alternate_target", "skip", "abort"]
     target: str = ""
     reason: str = ""
+
+
+class PlanValidation(BaseModel):
+    """Deterministic verdict on whether a plan tests the objective.
+
+    success_step_ids names the assert steps that verify the business
+    objective — the orchestrator derives objective_status from them,
+    keeping step success and business success as separate concepts.
+    """
+
+    approved: bool
+    reasons: list[str] = []
+    success_step_ids: list[int] = []
 
 
 class FailureAnalysis(BaseModel):
@@ -178,3 +192,5 @@ class TestRunResponse(BaseModel):
     analysis: FailureAnalysis | None = None
     report: str | None = None
     website: WebsiteSnapshot | None = None
+    objective_status: str = "unknown"
+    objective_reason: str = ""
