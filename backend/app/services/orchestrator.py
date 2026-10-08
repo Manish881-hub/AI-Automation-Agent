@@ -149,17 +149,28 @@ class Orchestrator:
                     "; ".join(validation.reasons),
                 )
                 try:
-                    run.plan = await asyncio.wait_for(
-                        planner.revise(
-                            self.llm, run.url, run.objective, run.website,
-                            run.plan, validation.reasons,
-                        ),
-                        timeout=PLANNER_TIMEOUT_SEC,
+                    try:
+                        run.plan = await asyncio.wait_for(
+                            planner.revise(
+                                self.llm, run.url, run.objective, run.website,
+                                run.plan, validation.reasons,
+                            ),
+                            timeout=PLANNER_TIMEOUT_SEC,
+                        )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError(
+                            f"planner revision timed out after {PLANNER_TIMEOUT_SEC}s"
+                        )
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    # A malformed revision is a failed attempt, not a dead run.
+                    revisions += 1
+                    self._record(
+                        run, session, "plan_validator", "plan_repair_failed",
+                        f"attempt {revisions}: unparsable revision ({str(exc)[:150]})",
                     )
-                except asyncio.TimeoutError:
-                    raise RuntimeError(
-                        f"planner revision timed out after {PLANNER_TIMEOUT_SEC}s"
-                    )
+                    continue
                 revisions += 1
                 save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
                 validation = validator.validate(run.plan, run.objective, MAX_STEPS)
@@ -383,33 +394,57 @@ class Orchestrator:
             + (run.analysis.probable_root_cause or "")
         )[:4000]
         self._record(run, session, "fixer", "tool_call", "propose patch")
-        try:
-            proposal = await asyncio.wait_for(
-                fixer.propose(self.llm, failure_summary, context),
-                timeout=PLANNER_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError:
-            self._record(run, session, "fixer", "propose_failed", "LLM timed out")
+        from ..tools.patch import PatchEngineError, build_diff
+
+        proposal = None
+        diff = ""
+        feedback = ""
+        for attempt in range(2):
+            try:
+                proposal = await asyncio.wait_for(
+                    fixer.propose(self.llm, failure_summary, context, feedback=feedback),
+                    timeout=PLANNER_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                self._record(run, session, "fixer", "propose_failed", "LLM timed out")
+                break
+            except Exception as exc:
+                self._record(run, session, "fixer", "propose_failed", str(exc)[:300])
+                break
+            if not proposal.edits:
+                self._record(run, session, "fixer", "propose_failed", "empty edit list")
+                proposal = None
+                break
+            try:
+                diff = await asyncio.to_thread(build_diff, tool, proposal.edits)
+            except PatchEngineError as exc:
+                # One bounded retry: hand the model the exact rejection.
+                save_text(run.run_id, f"fix_rejected_attempt{attempt}.json",
+                          proposal.model_dump_json(indent=2))
+                self._record(
+                    run, session, "fixer", "propose_failed",
+                    f"{exc}; retrying once",
+                )
+                feedback = (
+                    f"Your previous edit was rejected: {exc} "
+                    f"Reply with the FULL corrected JSON."
+                )
+                proposal = None
+                continue
+            break
+        if proposal is None or not diff:
+            run.fix_status = "proposal_failed"
+            self._record(run, session, "fixer", "propose_failed", "no applicable edit")
             return
-        except Exception as exc:
-            self._record(run, session, "fixer", "propose_failed", str(exc)[:300])
-            return
-        if not proposal.diff.strip():
-            self._record(run, session, "fixer", "propose_failed", "empty diff")
-            return
-        ok, check_out = await asyncio.to_thread(tool.apply_check, proposal.diff)
         self._record(
             run, session, "fixer", "fix_proposed",
-            f"applies cleanly: {ok}; awaiting human approval",
+            "applies cleanly: True; awaiting human approval",
         )
-        if not ok:
-            self._record(run, session, "fixer", "propose_failed", check_out[:300])
-            return
-        run.fix_diff = proposal.diff
+        run.fix_diff = diff
         run.fix_explanation = proposal.explanation
         run.fix_base_commit = tool.base_commit()
         run.fix_status = "awaiting_approval"
-        save_text(run.run_id, "fix.patch", proposal.diff)
+        save_text(run.run_id, "fix.patch", diff)
         save_text(
             run.run_id, "fix_proposal.md",
             "## Proposed fix\n\n" + proposal.explanation + "\n\n"
@@ -419,8 +454,10 @@ class Orchestrator:
     async def apply_fix(self, run_id: str) -> RunState:
         """Human-approved: verify base, branch, apply, test, re-verify.
 
-        Bounded: a failed browser re-verification proposes again (new
-        approval) while attempts remain, then stops at verify_failed.
+        Terminal fix states keep every verdict distinct: verified needs
+        BOTH pytest green and browser objective passed; otherwise
+        tests_failed or tests_passed_browser_failed. Bounded re-proposal
+        while attempts remain.
         """
         run = self.runs.get(run_id)
         if run is None:
@@ -483,7 +520,9 @@ class Orchestrator:
                 )
                 await self._propose_fix(run, session)
                 return self._finish_fix(run)
-            run.fix_status = "verify_failed"
+            # pytest green but the customer workflow still fails: keep the
+            # two verdicts distinct instead of collapsing them.
+            run.fix_status = "tests_passed_browser_failed"
             return self._finish_fix(run)
         except Exception as exc:
             run.fix_status = "apply_failed"
