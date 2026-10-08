@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
+import { apiUrl } from './api'
 
 type Run = {
   run_id: string
@@ -12,8 +13,6 @@ type Run = {
   analysis?: any
   report?: string
 }
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function App() {
   const [url, setUrl] = useState('https://example.com')
@@ -27,7 +26,7 @@ function App() {
     setLoading(true)
     setRun(null)
     setEvents([])
-    const res = await fetch(`${API}/api/runs`, {
+    const res = await fetch(apiUrl('/api/runs'), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url, objective})
     })
@@ -40,8 +39,8 @@ function App() {
     if (!run?.run_id) return
     const timer = setInterval(async () => {
       const [r, e] = await Promise.all([
-        fetch(`${API}/api/runs/${run.run_id}`),
-        fetch(`${API}/api/runs/${run.run_id}/events`)
+        fetch(apiUrl(`/api/runs/${run.run_id}`)),
+        fetch(apiUrl(`/api/runs/${run.run_id}/events`))
       ])
       setRun(await r.json())
       setEvents((await e.json()).events)
