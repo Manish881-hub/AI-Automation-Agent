@@ -1,5 +1,7 @@
 import asyncio
+import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 from ..agents.planner import PlannerAgent
 from ..agents.plan_validator import PlanValidatorAgent
@@ -11,7 +13,7 @@ from ..agents.debugger import DebuggerAgent
 from ..agents.reconnaissance import ReconnaissanceAgent
 from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
-from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
+from ..schemas import TestPlan, TestStep, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
 from ..services.history import record_terminal
 from ..services.llm import (
     LLM, BudgetExhausted, CallBudget,
@@ -21,6 +23,12 @@ from ..config import settings
 from ..tools.browser import BrowserTool
 from ..tools.codebase import CodebaseTool
 from ..tools.testrunner import TestRunnerTool
+from ..tools.worktree import (
+    WorktreeError, FIXTURE_SERVER, is_loopback, launch_fixture_server,
+    find_free_port, remove_worktree, repo_toplevel, rewrite_origin,
+    stop_server, worktree_clean, worktree_head, workspace_rel,
+    worktrees_base, create_worktree,
+)
 from ..services.artifacts import run_dir, save_text
 from ..services.session import session_store, Session
 
@@ -85,6 +93,10 @@ class RunState:
     error_stage: str = ""
     error_kind: str = ""
     error_message: str = ""
+    # This run's isolated checkout (removed on terminal paths; the fix
+    # branch is kept). Empty until a human approves — proposals never
+    # create checkouts.
+    fix_worktree: str = ""
     # Per-run LLM spend. The shared client is wrapped per run
     # (LLM.scoped) so concurrent runs account separately; llm_calls mirrors
     # the budget counter for API/dashboard observability.
@@ -531,12 +543,15 @@ class Orchestrator:
         )
 
     async def apply_fix(self, run_id: str) -> RunState:
-        """Human-approved: verify base, branch, apply, test, re-verify.
+        """Human-approved: isolate, apply, test, re-verify.
 
-        Terminal fix states keep every verdict distinct: verified needs
-        BOTH pytest green and browser objective passed; otherwise
-        tests_failed or tests_passed_browser_failed. Bounded re-proposal
-        while attempts remain.
+        Everything mutating happens inside this run's dedicated worktree,
+        checked out at the proposal's recorded base commit — the main
+        checkout is never branched, patched, or dirtied. Terminal fix
+        states keep every verdict distinct: verified needs BOTH pytest
+        green and browser objective passed; otherwise tests_failed or
+        tests_passed_browser_failed. Bounded re-proposal while attempts
+        remain.
         """
         run = self.runs.get(run_id)
         if run is None:
@@ -544,26 +559,41 @@ class Orchestrator:
         if run.fix_status != "awaiting_approval":
             raise ValueError(f"fix is {run.fix_status}, not awaiting approval")
         session = session_store.get(run.run_id) or session_store.create(run.run_id)
-        tool = CodebaseTool(settings.workspace_root)
-        runner = TestRunnerTool(settings.workspace_root, timeout=settings.test_timeout_sec)
         run.fix_status = "applying"
-        self._record(run, session, "fixer", "fix_approved", "applying on a new branch")
+        self._record(run, session, "fixer", "fix_approved", "isolating a worktree")
         try:
-            if run.fix_base_commit:
-                current = tool.base_commit()
-                if current != run.fix_base_commit:
-                    raise RuntimeError(
-                        f"workspace moved since proposal "
-                        f"({current[:8] or 'none'} != {run.fix_base_commit[:8]}); refusing"
-                    )
-                if tool.has_tracked_changes():
-                    raise RuntimeError(
-                        "workspace has uncommitted tracked changes since proposal; refusing"
-                    )
+            ws_root = Path(settings.workspace_root).resolve()
+            repo = repo_toplevel(ws_root)
+            if repo is None:
+                raise WorktreeError("workspace is not inside a git repository; refusing")
+            rel = workspace_rel(ws_root, repo)
+            base = (run.fix_base_commit or "").strip()
+            if not base:
+                raise WorktreeError("proposal recorded no base commit; refusing")
+            wt_base = worktrees_base(settings.artifact_dir)
+            wt_path = wt_base / run.run_id
+            if wt_path.exists():
+                # Leftover of a crashed attempt for THIS run only (the path
+                # embeds the run id, so no other run's tree can match it).
+                self._remove_worktree_dir(repo, wt_base, wt_path)
             suffix = "" if run.fix_attempts == 0 else f"-r{run.fix_attempts}"
             branch = f"fix/{run.run_id[:8]}{suffix}"
-            await asyncio.to_thread(tool.create_branch, branch)
+            await asyncio.to_thread(create_worktree, repo, wt_path, branch, base)
+            if await asyncio.to_thread(worktree_head, wt_path) != base:
+                raise WorktreeError(
+                    f"worktree HEAD moved during creation; refusing stale tree"
+                )
+            if not await asyncio.to_thread(worktree_clean, wt_path):
+                raise WorktreeError("fresh worktree is not clean; refusing")
+            wt_ws = wt_path / rel
             run.fix_branch = branch
+            run.fix_worktree = str(wt_path)
+            self._record(
+                run, session, "fixer", "worktree_ready",
+                f"{branch} at {base[:8]} (main checkout untouched)",
+            )
+            tool = CodebaseTool(str(wt_ws))
+            runner = TestRunnerTool(str(wt_ws), timeout=settings.test_timeout_sec)
             status = await asyncio.to_thread(tool.apply_patch, run.fix_diff)
             self._record(run, session, "fixer", "patch_applied", status[:200])
             touched = tool.diff_paths(run.fix_diff)
@@ -608,8 +638,46 @@ class Orchestrator:
             self._record(run, session, "fixer", "apply_failed", str(exc)[:300])
             return self._finish_fix(run)
 
+    def _remove_worktree_dir(self, repo: Path, wt_base: Path, wt_path: Path) -> None:
+        """Best-effort removal of this run's own stale path (git-tracked or
+        leftover directory). Scoped to the run-id path under our base dir."""
+        try:
+            remove_worktree(repo, wt_path, wt_base)
+        except WorktreeError:
+            pass
+        if wt_path.exists() and wt_base.resolve() in wt_path.resolve().parents:
+            shutil.rmtree(wt_path, ignore_errors=True)
+
+    def _cleanup_worktree(self, run: RunState, session: Session) -> None:
+        """Remove this run's worktree on every terminal path. Keeps the fix
+        branch, reports, and evidence. Never touches another run's tree:
+        only the exact path recorded on this run is eligible, and removal
+        refuses anything outside the runs' worktree base directory."""
+        raw = (run.fix_worktree or "").strip()
+        if not raw:
+            return
+        try:
+            repo = repo_toplevel(Path(settings.workspace_root).resolve())
+            if repo is None:
+                return
+            removed = remove_worktree(
+                repo, Path(raw), worktrees_base(settings.artifact_dir)
+            )
+            self._record(
+                run, session, "fixer", "worktree_cleaned",
+                "removed" if removed else "already gone",
+            )
+        except WorktreeError as exc:
+            self._record(run, session, "fixer", "worktree_cleanup_failed", str(exc)[:200])
+        except Exception as exc:
+            self._record(
+                run, session, "fixer", "worktree_cleanup_failed", type(exc).__name__,
+            )
+
     def _finish_fix(self, run: RunState) -> RunState:
         self._sync_budget(run)
+        session = session_store.get(run.run_id) or session_store.create(run.run_id)
+        self._cleanup_worktree(run, session)
         record_terminal(run, "fix_terminal")
         save_text(run.run_id, "events.log", "\n".join(run.events))
         try:
@@ -618,9 +686,45 @@ class Orchestrator:
             pass
         return run
 
+    def _fix_workspace(self, run: RunState) -> Path | None:
+        """This run's isolated workspace root, or None before approval."""
+        if not (run.fix_worktree or "").strip():
+            return None
+        ws_root = Path(settings.workspace_root).resolve()
+        repo = repo_toplevel(ws_root)
+        if repo is None:
+            return None
+        return Path(run.fix_worktree) / workspace_rel(ws_root, repo)
+
+    @staticmethod
+    def _rewrite_step(step: TestStep, run_url: str, verify_base: str) -> TestStep:
+        """Retarget one replay step at the worktree fixture server.
+
+        Only navigate targets and url-assertion values whose origin matches
+        the original run URL are rewritten; everything else (including
+        external links) passes through untouched.
+        """
+        update: dict = {}
+        if step.action == "navigate" and step.target:
+            new_target = rewrite_origin(step.target, run_url, verify_base)
+            if new_target != step.target:
+                update["target"] = new_target
+        if (step.action == "assert" and step.assertion_type == "url"
+                and step.value):
+            new_value = rewrite_origin(step.value, run_url, verify_base)
+            if new_value != step.value:
+                update["value"] = new_value
+        return step.model_copy(update=update) if update else step
+
     async def _verify_fix(self, run: RunState, session: Session) -> tuple[bool, str]:
         """Replay the approved plan against the patched app: does the
-        original objective pass now? No LLM — deterministic re-execution."""
+        original objective pass now? No LLM — deterministic re-execution.
+
+        For loopback runs the fixture server is launched from the run's
+        own worktree on an isolated port, so the replay exercises the
+        patched code — never the main checkout, never another run's tree.
+        Anything else replays the original URL exactly as before.
+        """
         from ..agents.browser_agent import BrowserAgent
         from ..agents.validator import ValidatorAgent
 
@@ -628,10 +732,25 @@ class Orchestrator:
         validator = ValidatorAgent()
         browser = BrowserTool()
         results: list[StepResult] = []
-        self._record(run, session, "verifier", "tool_call", "re-test original objective")
+        server_proc = None
+        steps = list((run.plan.steps if run.plan else [])[:MAX_STEPS])
         try:
+            wt_ws = self._fix_workspace(run)
+            if (wt_ws is not None and is_loopback(run.url)
+                    and (wt_ws / FIXTURE_SERVER).is_file()):
+                port = find_free_port()
+                log_file = run_dir(run.run_id) / "fix_server.log"
+                server_proc = await asyncio.to_thread(
+                    launch_fixture_server, wt_ws, port, log_file,
+                )
+                verify_base = f"http://127.0.0.1:{port}"
+                steps = [self._rewrite_step(s, run.url, verify_base) for s in steps]
+                mode = f"re-test worktree fixture at {verify_base}"
+            else:
+                mode = "re-test original URL"
+            self._record(run, session, "verifier", "tool_call", mode)
             await browser.start()
-            for step in (run.plan.steps if run.plan else [])[:MAX_STEPS]:
+            for step in steps:
                 shot = str(run_dir(run.run_id) / f"verify_step_{step.id}.png")
                 try:
                     result = await asyncio.wait_for(
@@ -650,6 +769,8 @@ class Orchestrator:
                     f"-> {result.status}",
                 )
         finally:
+            if server_proc is not None:
+                await asyncio.to_thread(stop_server, server_proc)
             try:
                 await browser.close()
             except Exception:

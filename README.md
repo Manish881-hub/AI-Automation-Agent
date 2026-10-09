@@ -136,6 +136,18 @@ Evidence for the reference run lives under
 - Do not merge a generated fix into `main` unless you intend to change the
   fixture. To re-demo from scratch, stay on `main` and start a fresh run.
 
+### Fix isolation (per-run worktrees)
+
+- Approval creates one worktree at the proposal's base commit
+  (`backend/artifacts/worktrees/<run_id>`, removed afterwards); the main
+  checkout is never branched or patched, so concurrent runs cannot touch
+  each other's code.
+- pytest runs inside the worktree; for loopback apps the fixture server is
+  launched from the worktree on an isolated port and the replay is
+  retargeted at it, so verification exercises the patched code.
+- Stale bases, dirty trees, and foreign paths fail closed before anything
+  is applied; fix branches are kept for inspection after worktree cleanup.
+
 ## Engineering notes
 
 - **Nested-workspace `git apply` scoping** (`backend/app/tools/codebase.py`):
