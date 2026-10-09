@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     llm_max_attempts: int = 4
     llm_retry_base_sec: float = 1.0
     llm_retry_max_sec: float = 30.0
+    # Per-run LLM budget (logical structured/text calls, not SDK attempts).
+    # The pipeline's structural maximum is ~18 (plan + 2 revisions + up to
+    # 12 recovery calls + debugger + 2 fix proposals); the default leaves
+    # headroom so normal runs — including the golden autofix — never trip
+    # it, while a looping agent stops loudly instead of spending freely.
+    llm_max_calls_per_run: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

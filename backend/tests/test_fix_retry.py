@@ -36,6 +36,9 @@ class StubLLM:
         self.proposals = list(proposals)
         self.calls = 0
 
+    def scoped(self, budget):
+        return self
+
     async def structured(self, system, user, schema):
         self.calls += 1
         return self.proposals.pop(0)

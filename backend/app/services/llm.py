@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Type, TypeVar
 from openai import (
     AsyncOpenAI,
@@ -67,6 +68,21 @@ def is_infrastructure_error(exc: BaseException) -> bool:
     return "timed out" in msg or "budget" in msg
 
 
+class BudgetExhausted(RuntimeError):
+    """Per-run LLM call budget spent: a policy stop, not a provider
+    failure and not a website verdict."""
+
+
+@dataclass
+class CallBudget:
+    """One run's LLM spend. Counts logical calls (structured/text), not
+    SDK attempts — attempts inside a call stay bounded by
+    llm_max_attempts; this bounds how many calls a run may start."""
+
+    calls: int = 0
+    cap: int = 30
+
+
 def describe_provider_error(exc: BaseException) -> str:
     """Short, actionable, secret-free message for the run timeline.
 
@@ -75,6 +91,9 @@ def describe_provider_error(exc: BaseException) -> str:
     (infrastructure, not the website under test), and what to do next.
     """
     status = getattr(exc, "status_code", None)
+    if isinstance(exc, BudgetExhausted):
+        # Policy stop carries its own actionable wording; keep it verbatim.
+        return redact_secrets(str(exc))[:500] or "LLM budget exhausted"
     if isinstance(exc, RateLimitError) or status == 429:
         return (
             "LLM provider rate limit (HTTP 429): the model backend is "
@@ -176,6 +195,11 @@ class LLM:
         assert last_exc is not None
         raise last_exc
 
+    def scoped(self, budget: CallBudget) -> "ScopedLLM":
+        """Per-run view of the shared client with the same interface, so
+        agents need no changes to become budget-aware."""
+        return ScopedLLM(self, budget)
+
     async def structured(self, system: str, user: str, schema: Type[T]) -> T:
         messages = [
             {"role": "system", "content": system},
@@ -190,3 +214,31 @@ class LLM:
             {"role": "user", "content": user},
         ]
         return await self._create_resilient(messages, json_mode=False)
+
+
+class ScopedLLM(LLM):
+    """An LLM bound to one run's CallBudget. Spends one unit per logical
+    call and raises BudgetExhausted instead of calling once the cap is
+    reached — loops become policy stops, never runaway spend."""
+
+    def __init__(self, parent: LLM, budget: CallBudget):
+        self.client = parent.client
+        self.budget = budget
+
+    async def structured(self, system: str, user: str, schema: Type[T]) -> T:
+        self._spend()
+        return await super().structured(system, user, schema)
+
+    async def text(self, system: str, user: str) -> str:
+        self._spend()
+        return await super().text(system, user)
+
+    def _spend(self) -> None:
+        if self.budget.calls >= self.budget.cap:
+            raise BudgetExhausted(
+                f"LLM budget exhausted ({self.budget.calls}/{self.budget.cap} calls): "
+                "run stopped to bound cost and latency. The timeline shows "
+                "where calls went; raise LLM_MAX_CALLS_PER_RUN only if the "
+                "task legitimately needs more."
+            )
+        self.budget.calls += 1

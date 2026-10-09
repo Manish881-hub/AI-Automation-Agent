@@ -35,6 +35,7 @@ async def get_run(run_id: str):
         error_stage=run.error_stage,
         error_kind=run.error_kind,
         error_message=run.error_message,
+        llm_calls=run.llm_calls,
         fix_status=run.fix_status,
         fix_verify_summary=run.fix_verify_summary,
         fix_explanation=run.fix_explanation,

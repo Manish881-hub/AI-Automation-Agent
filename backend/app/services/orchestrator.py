@@ -12,7 +12,10 @@ from ..agents.reconnaissance import ReconnaissanceAgent
 from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
 from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
-from ..services.llm import LLM, describe_provider_error, is_infrastructure_error
+from ..services.llm import (
+    LLM, BudgetExhausted, CallBudget,
+    describe_provider_error, is_infrastructure_error,
+)
 from ..config import settings
 from ..tools.browser import BrowserTool
 from ..tools.codebase import CodebaseTool
@@ -81,6 +84,13 @@ class RunState:
     error_stage: str = ""
     error_kind: str = ""
     error_message: str = ""
+    # Per-run LLM spend. The shared client is wrapped per run
+    # (LLM.scoped) so concurrent runs account separately; llm_calls mirrors
+    # the budget counter for API/dashboard observability.
+    llm_budget: CallBudget = field(
+        default_factory=lambda: CallBudget(cap=settings.llm_max_calls_per_run)
+    )
+    llm_calls: int = 0
 
 
 class Orchestrator:
@@ -113,6 +123,9 @@ class Orchestrator:
         reporter = ReporterAgent()
         browser = BrowserTool()
         stage = "starting"
+        # All agent reasoning in this run spends from its own budget, so one
+        # looping run cannot spend another's allowance on the shared client.
+        llm = self.llm.scoped(run.llm_budget)
 
         async def _run_pipeline():
             nonlocal stage
@@ -143,7 +156,7 @@ class Orchestrator:
             self._record(run, session, "planner", "tool_call", "generate test plan")
             try:
                 run.plan = await asyncio.wait_for(
-                    planner.run(self.llm, run.url, run.objective, website_context=run.website),
+                    planner.run(llm, run.url, run.objective, website_context=run.website),
                     timeout=PLANNER_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
@@ -166,7 +179,7 @@ class Orchestrator:
                     try:
                         run.plan = await asyncio.wait_for(
                             planner.revise(
-                                self.llm, run.url, run.objective, run.website,
+                                llm, run.url, run.objective, run.website,
                                 run.plan, validation.reasons,
                             ),
                             timeout=PLANNER_TIMEOUT_SEC,
@@ -241,7 +254,7 @@ class Orchestrator:
                             timeout=RECOVERY_TIMEOUT_SEC,
                         )
                         decision = await asyncio.wait_for(
-                            recovery_agent.run(self.llm, step, available, result.message),
+                            recovery_agent.run(llm, step, available, result.message),
                             timeout=RECOVERY_TIMEOUT_SEC,
                         )
                     except asyncio.TimeoutError:
@@ -328,7 +341,7 @@ class Orchestrator:
             stage = "diagnosis"
             self._record(run, session, "debugger", "tool_call", "analyze results")
             run.analysis = await asyncio.wait_for(
-                debugger.run(self.llm, run.results),
+                debugger.run(llm, run.results),
                 timeout=PLANNER_TIMEOUT_SEC,
             )
             self._record(
@@ -357,7 +370,11 @@ class Orchestrator:
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
             run.status = "completed"
-            self._record(run, session, "orchestrator", "completed")
+            self._sync_budget(run)
+            self._record(
+                run, session, "orchestrator", "completed",
+                f"{run.llm_calls}/{run.llm_budget.cap} LLM calls",
+            )
         except asyncio.TimeoutError:
             self._fail_run(
                 run, session, stage,
@@ -390,15 +407,24 @@ class Orchestrator:
         not a website failure, and the dashboard must show that split."""
         run.status = "failed"
         run.error_stage = stage or "unknown"
-        run.error_kind = (
-            "infrastructure" if is_infrastructure_error(exc) else "agent"
-        )
+        if isinstance(exc, BudgetExhausted):
+            run.error_kind = "budget"
+        else:
+            run.error_kind = (
+                "infrastructure" if is_infrastructure_error(exc) else "agent"
+            )
         run.error_message = describe_provider_error(exc)
+        self._sync_budget(run)
         self._record(
             run, session, "orchestrator", "run_failed",
-            f"{run.error_stage}: {run.error_message}",
+            f"{run.error_stage}: {run.error_message} "
+            f"({run.llm_calls}/{run.llm_budget.cap} LLM calls)",
         )
         return run
+
+    @staticmethod
+    def _sync_budget(run: RunState) -> None:
+        run.llm_calls = run.llm_budget.calls
 
     async def _propose_fix(self, run: RunState, session: Session) -> None:
         """Diagnose code, propose a diff, and park for human approval.
@@ -439,10 +465,11 @@ class Orchestrator:
         proposal = None
         diff = ""
         feedback = ""
+        llm = self.llm.scoped(run.llm_budget)
         for attempt in range(2):
             try:
                 proposal = await asyncio.wait_for(
-                    fixer.propose(self.llm, failure_summary, context, feedback=feedback),
+                    fixer.propose(llm, failure_summary, context, feedback=feedback),
                     timeout=PLANNER_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
@@ -576,6 +603,7 @@ class Orchestrator:
             return self._finish_fix(run)
 
     def _finish_fix(self, run: RunState) -> RunState:
+        self._sync_budget(run)
         save_text(run.run_id, "events.log", "\n".join(run.events))
         try:
             session_store.persist(run.run_id)

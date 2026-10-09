@@ -269,6 +269,7 @@ class TestRunResponse(BaseModel):
     error_stage: str = ""
     error_kind: str = ""
     error_message: str = ""
+    llm_calls: int = 0
     fix_status: str = "none"
     fix_verify_summary: str = ""
     fix_explanation: str = ""
