@@ -43,9 +43,14 @@ export type RunView = {
   report?: string | null;
   website?: Website;
   fix_status?: string;
+  error_stage?: string;
+  error_kind?: string;
+  error_message?: string;
+  objective_status?: string;
+  objective_reason?: string;
 };
 
-export type CheckState = "done" | "fail" | "pending";
+export type CheckState = "done" | "fail" | "pending" | "skipped";
 
 export type CheckItem = {
   id: string;
@@ -71,33 +76,59 @@ function stepLabel(s: PlanStep): string {
   return `${s.action} ${what}`.trim();
 }
 
+export type ResultsPanel =
+  | { kind: "waiting" }
+  | { kind: "results" }
+  | { kind: "empty"; headline: string; detail: string };
+
+/** Test-results panel state. A terminal run never "waits": with no step
+ * results it says execution never started (or produced nothing) and why. */
+export function getResultsPanel(run: RunView): ResultsPanel {
+  if ((run.results ?? []).length > 0) return { kind: "results" };
+  if (run.status !== "failed" && run.status !== "completed") return { kind: "waiting" };
+  const why =
+    run.error_message ||
+    run.objective_reason ||
+    (run.status === "failed" ? "the run failed before producing step results" : "the run produced no step results");
+  const headline =
+    (run.plan?.steps ?? []).length > 0 ? "Test execution produced no results" : "Test execution not started";
+  const stage = run.error_stage ? ` (failed during ${run.error_stage})` : "";
+  return { kind: "empty", headline, detail: `${why}${stage}` };
+}
+
 /** Agent execution checklist, derived during render from run + events. */
 export function getChecklist(run: RunView, events: string[]): CheckItem[] {
   const items: CheckItem[] = [];
   const website = run.website ?? null;
+  const terminal = run.status === "failed" || run.status === "completed";
+  // Pipeline stages that never ran must not keep a waiting indicator once
+  // the run is terminal. The fix-approval item is excluded: awaiting_approval
+  // is an actionable human gate, not a waiting spinner.
+  const settle = (item: CheckItem): CheckItem =>
+    terminal && item.state === "pending" ? { ...item, state: "skipped", detail: item.detail ?? "did not run" } : item;
 
-  items.push(
+  items.push(settle(
     website
       ? { id: "recon", label: "reconnaissance", state: "done", detail: website.title || website.url }
       : hasEvent(events, "recon_failed")
         ? { id: "recon", label: "reconnaissance", state: "fail", detail: "snapshot unavailable" }
         : { id: "recon", label: "reconnaissance", state: "pending" },
-  );
+  ));
 
   const steps = run.plan?.steps ?? [];
-  items.push(
+  items.push(settle(
     steps.length > 0
       ? { id: "plan", label: "planning", state: "done", detail: `${steps.length} steps` }
-      : hasEvent(events, "fatal_error") || hasEvent(events, "timed_out")
+      : hasEvent(events, "fatal_error") || hasEvent(events, "timed_out") || hasEvent(events, "run_failed")
         ? { id: "plan", label: "planning", state: "fail", detail: "no plan generated" }
         : { id: "plan", label: "planning", state: "pending" },
-  );
+  ));
 
   const byId = new Map((run.results ?? []).map((r) => [r.step_id, r]));
   for (const s of steps) {
     const r = byId.get(s.id);
     if (!r) {
-      items.push({ id: `step-${s.id}`, label: stepLabel(s), state: "pending" });
+      items.push(settle({ id: `step-${s.id}`, label: stepLabel(s), state: "pending" }));
     } else if (r.status === "passed") {
       items.push({
         id: `step-${s.id}`, label: stepLabel(s), state: "done",
@@ -111,14 +142,14 @@ export function getChecklist(run: RunView, events: string[]): CheckItem[] {
     }
   }
 
-  items.push(
+  items.push(settle(
     run.analysis
       ? {
           id: "debug", label: "debugger", state: "done",
           detail: run.analysis.failed ? "failure diagnosed" : "no remaining failure",
         }
       : { id: "debug", label: "debugger", state: "pending" },
-  );
+  ));
 
   const results = run.results ?? [];
   if (results.length > 0) {
@@ -146,11 +177,11 @@ export function getChecklist(run: RunView, events: string[]): CheckItem[] {
     );
   }
 
-  items.push(
+  items.push(settle(
     run.report
       ? { id: "report", label: "report", state: "done" }
       : { id: "report", label: "report", state: "pending" },
-  );
+  ));
 
   const fix = run.fix_status ?? "none";
   if (fix !== "none") {

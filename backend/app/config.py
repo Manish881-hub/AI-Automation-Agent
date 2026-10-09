@@ -17,6 +17,21 @@ class Settings(BaseSettings):
     workspace_root: str = "."
     fix_enabled: bool = True
     test_timeout_sec: int = 180
+    # OpenRouter fallback routing: comma-separated extra model ids tried by
+    # OpenRouter itself when the primary is rate-limited or unavailable.
+    # Sent via the OpenAI SDK's extra_body {"models": [...]} mechanism, so
+    # no model names are hardcoded here — configure only models you have
+    # verified, and prefer ones supporting JSON response_format (the
+    # planner parses structured output; see the json_object fallback in
+    # services/llm.py). Empty means primary-only.
+    openai_fallback_models: str = ""
+    # Bounded resilience for transient provider errors (429/502/503/504…):
+    # total SDK attempts per LLM call, then the error propagates and the
+    # orchestrator records a terminal infrastructure failure. Auth and
+    # request-validation errors (401/403/400/404/422) are never retried.
+    llm_max_attempts: int = 4
+    llm_retry_base_sec: float = 1.0
+    llm_retry_max_sec: float = 30.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

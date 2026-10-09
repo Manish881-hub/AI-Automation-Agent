@@ -266,6 +266,9 @@ class TestRunResponse(BaseModel):
     website: WebsiteSnapshot | None = None
     objective_status: str = "unknown"
     objective_reason: str = ""
+    error_stage: str = ""
+    error_kind: str = ""
+    error_message: str = ""
     fix_status: str = "none"
     fix_verify_summary: str = ""
     fix_explanation: str = ""

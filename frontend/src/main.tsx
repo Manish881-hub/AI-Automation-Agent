@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
 import { apiUrl } from './api'
-import { getChecklist, inputLabel, linkText } from './runSummary'
+import { getChecklist, getResultsPanel, inputLabel, linkText } from './runSummary'
 
 type Website = {
   url: string
@@ -25,6 +25,9 @@ type Run = {
   website?: Website | null
   objective_status?: string
   objective_reason?: string
+  error_stage?: string
+  error_kind?: string
+  error_message?: string
   fix_status?: string
   fix_explanation?: string
   fix_branch?: string
@@ -116,7 +119,7 @@ function App() {
           <h2>agent execution</h2>
           <ul className="checklist">
             {getChecklist(run, events).map(item => <li key={item.id} className={item.state}>
-              <span aria-hidden="true">{item.state === 'done' ? '✓' : item.state === 'fail' ? '✕' : '…'}</span>
+              <span aria-hidden="true">{item.state === 'done' ? '✓' : item.state === 'fail' ? '✕' : item.state === 'skipped' ? '–' : '…'}</span>
               <span>{item.label}</span>
               {item.detail && <span className="muted">{item.detail}</span>}
             </li>)}
@@ -125,7 +128,12 @@ function App() {
       </section>
       <section className="grid">
         <div className="card"><h2>agent timeline</h2><div className="timeline">{events.map((x,i)=><div key={i}>{x}</div>)}</div></div>
-        <div className="card"><h2>test results</h2>{run.results?.length ? run.results.map(r=><div className="result" key={r.step_id}><span className={r.status}>{r.status}</span><b>step {r.step_id}</b><span>{r.message}{r.retried ? ' (retried)' : ''}</span></div>) : <p>waiting for execution…</p>}</div>
+        <div className="card"><h2>test results</h2>{(() => {
+          const panel = getResultsPanel(run)
+          if (panel.kind === 'results') return run.results!.map(r=><div className="result" key={r.step_id}><span className={r.status}>{r.status}</span><b>step {r.step_id}</b><span>{r.message}{r.retried ? ' (retried)' : ''}</span></div>)
+          if (panel.kind === 'empty') return <><p><b>{panel.headline}</b></p><p className="muted">{panel.detail}</p></>
+          return <p>waiting for execution…</p>
+        })()}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
       {run.fix_status && run.fix_status !== 'none' && (

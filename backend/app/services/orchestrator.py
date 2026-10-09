@@ -12,7 +12,7 @@ from ..agents.reconnaissance import ReconnaissanceAgent
 from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
 from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
-from ..services.llm import LLM
+from ..services.llm import LLM, describe_provider_error, is_infrastructure_error
 from ..config import settings
 from ..tools.browser import BrowserTool
 from ..tools.codebase import CodebaseTool
@@ -71,6 +71,13 @@ class RunState:
     analysis: FailureAnalysis | None = None
     report: str | None = None
     events: list[str] = field(default_factory=list)
+    # Terminal infrastructure failure (distinct from a failed test or a
+    # failed business objective): which stage died and why, in dashboard-
+    # safe wording. objective_status stays "unknown" — the website under
+    # test was never judged.
+    error_stage: str = ""
+    error_kind: str = ""
+    error_message: str = ""
 
 
 class Orchestrator:
@@ -102,9 +109,12 @@ class Orchestrator:
         debugger = DebuggerAgent()
         reporter = ReporterAgent()
         browser = BrowserTool()
+        stage = "starting"
 
         async def _run_pipeline():
+            nonlocal stage
             # --- reconnaissance: understand the page before planning ---
+            stage = "reconnaissance"
             await browser.start()
             self._record(run, session, "reconnaissance", "recon_started", run.url)
             try:
@@ -126,6 +136,7 @@ class Orchestrator:
                 self._record(run, session, "reconnaissance", "recon_failed", str(exc))
 
             # --- planning, grounded in the snapshot when available ---
+            stage = "planning"
             self._record(run, session, "planner", "tool_call", "generate test plan")
             try:
                 run.plan = await asyncio.wait_for(
@@ -192,6 +203,7 @@ class Orchestrator:
             )
 
             # --- execute with recovery retries ---
+            stage = "execution"
             for step in run.plan.steps[:MAX_STEPS]:
                 self._record(
                     run, session, "browser", "step_started", f"step {step.id} ({step.action})",
@@ -310,6 +322,7 @@ class Orchestrator:
                 run.objective_reason,
             )
 
+            stage = "diagnosis"
             self._record(run, session, "debugger", "tool_call", "analyze results")
             run.analysis = await asyncio.wait_for(
                 debugger.run(self.llm, run.results),
@@ -319,6 +332,7 @@ class Orchestrator:
                 run, session, "debugger", "analysis_completed",
                 "failure" if run.analysis.failed else "no remaining failure",
             )
+            stage = "reporting"
             self._record(run, session, "reporter", "tool_call", "generate report")
             run.report = reporter.run(
                 run.results, run.analysis,
@@ -329,6 +343,7 @@ class Orchestrator:
             self._record(run, session, "reporter", "report_generated")
 
             # --- white-box fix loop: propose a patch, wait for a human ---
+            stage = "fix_proposal"
             if (
                 settings.fix_enabled
                 and run.analysis is not None
@@ -341,14 +356,17 @@ class Orchestrator:
             run.status = "completed"
             self._record(run, session, "orchestrator", "completed")
         except asyncio.TimeoutError:
-            run.status = "failed"
+            self._fail_run(
+                run, session, stage,
+                RuntimeError(f"run exceeded {RUN_TIMEOUT_SEC}s budget"),
+            )
             self._record(
                 run, session, "orchestrator", "timed_out",
-                f"exceeded {RUN_TIMEOUT_SEC}s budget",
+                f"exceeded {RUN_TIMEOUT_SEC}s budget during {stage}",
             )
         except Exception as exc:
-            run.status = "failed"
-            self._record(run, session, "orchestrator", "fatal_error", str(exc))
+            self._fail_run(run, session, stage, exc)
+            self._record(run, session, "orchestrator", "fatal_error", run.error_message)
         finally:
             save_text(run.run_id, "events.log", "\n".join(run.events))
             try:
@@ -359,6 +377,25 @@ class Orchestrator:
                 await browser.close()
             except Exception:
                 pass
+
+    def _fail_run(
+        self, run: RunState, session: Session, stage: str, exc: BaseException
+    ) -> RunState:
+        """Terminal infrastructure failure: the run died before it could
+        produce a verdict. Records WHERE (stage) and WHY (sanitized,
+        actionable) without touching objective_status — a dead provider is
+        not a website failure, and the dashboard must show that split."""
+        run.status = "failed"
+        run.error_stage = stage or "unknown"
+        run.error_kind = (
+            "infrastructure" if is_infrastructure_error(exc) else "agent"
+        )
+        run.error_message = describe_provider_error(exc)
+        self._record(
+            run, session, "orchestrator", "run_failed",
+            f"{run.error_stage}: {run.error_message}",
+        )
+        return run
 
     async def _propose_fix(self, run: RunState, session: Session) -> None:
         """Diagnose code, propose a diff, and park for human approval.
