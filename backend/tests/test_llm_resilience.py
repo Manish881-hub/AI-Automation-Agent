@@ -60,6 +60,13 @@ def _llm_with(completions: FakeCompletions) -> LLM:
     return llm
 
 
+@pytest.fixture(autouse=True)
+def _isolated_artifacts(tmp_path, monkeypatch):
+    # _fail_run appends to the history index: keep suite writes out of the
+    # real backend/artifacts directory.
+    monkeypatch.setattr(settings, "artifact_dir", str(tmp_path))
+
+
 @pytest.fixture()
 def no_sleep(monkeypatch):
     recorded: list[float] = []

@@ -12,6 +12,7 @@ from ..agents.reconnaissance import ReconnaissanceAgent
 from ..agents.recovery import RecoveryAgent
 from ..agents.reporter import ReporterAgent
 from ..schemas import TestPlan, StepResult, FailureAnalysis, TestEvidence, WebsiteSnapshot
+from ..services.history import record_terminal
 from ..services.llm import (
     LLM, BudgetExhausted, CallBudget,
     describe_provider_error, is_infrastructure_error,
@@ -91,6 +92,9 @@ class RunState:
         default_factory=lambda: CallBudget(cap=settings.llm_max_calls_per_run)
     )
     llm_calls: int = 0
+    # Terminal transitions already appended to the durable history index;
+    # prevents duplicate rows if a recording path ever runs twice.
+    recorded_transitions: set[str] = field(default_factory=set)
 
 
 class Orchestrator:
@@ -375,6 +379,7 @@ class Orchestrator:
                 run, session, "orchestrator", "completed",
                 f"{run.llm_calls}/{run.llm_budget.cap} LLM calls",
             )
+            record_terminal(run, "run_completed")
         except asyncio.TimeoutError:
             self._fail_run(
                 run, session, stage,
@@ -420,6 +425,7 @@ class Orchestrator:
             f"{run.error_stage}: {run.error_message} "
             f"({run.llm_calls}/{run.llm_budget.cap} LLM calls)",
         )
+        record_terminal(run, "run_failed")
         return run
 
     @staticmethod
@@ -604,6 +610,7 @@ class Orchestrator:
 
     def _finish_fix(self, run: RunState) -> RunState:
         self._sync_budget(run)
+        record_terminal(run, "fix_terminal")
         save_text(run.run_id, "events.log", "\n".join(run.events))
         try:
             session_store.persist(run.run_id)
@@ -660,6 +667,8 @@ class Orchestrator:
         run.fix_status = "rejected"
         session = session_store.get(run.run_id) or session_store.create(run.run_id)
         self._record(run, session, "fixer", "fix_rejected", "human declined the patch")
+        self._sync_budget(run)
+        record_terminal(run, "fix_terminal")
         save_text(run.run_id, "events.log", "\n".join(run.events))
         return run
 

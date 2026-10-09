@@ -24,6 +24,13 @@ from test_llm_resilience import FakeCompletions, _err, _ok_reply
 import openai
 
 
+@pytest.fixture(autouse=True)
+def _isolated_artifacts(tmp_path, monkeypatch):
+    # _fail_run appends to the history index: keep suite writes out of the
+    # real backend/artifacts directory.
+    monkeypatch.setattr(settings, "artifact_dir", str(tmp_path))
+
+
 @pytest.fixture()
 def no_sleep(monkeypatch):
     recorded: list[float] = []

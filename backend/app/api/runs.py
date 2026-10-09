@@ -1,9 +1,20 @@
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from ..schemas import TestRunRequest, TestRunResponse, normalize_url
+from ..services.history import read_history
 from ..services.orchestrator import orchestrator
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+@router.get("", response_model=None)
+async def list_runs(limit: int = Query(default=50, ge=1, le=200)):
+    """Durable history: terminal-transition summaries, newest first.
+
+    Survives backend restarts (the index is append-only on disk), unlike
+    the live per-run endpoints which only know in-memory runs.
+    """
+    return {"runs": read_history(limit=limit)}
 
 
 @router.post("", response_model=TestRunResponse, status_code=202)
