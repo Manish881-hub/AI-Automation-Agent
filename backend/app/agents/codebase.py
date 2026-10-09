@@ -12,18 +12,22 @@ _TOKEN_RE = re.compile(r"\b[a-z_][a-z0-9_]{3,}\b")
 def failure_terms(results: list[StepResult], analysis: FailureAnalysis | None) -> list[str]:
     """Deterministic search terms from observed failure evidence — no LLM.
 
-    Collects quoted identifiers and snake_case tokens from step messages,
-    console/network errors, and the debugger's stated cause, most specific
-    (longest) first, capped so the search stays cheap.
+    Collects quoted identifiers and snake_case tokens from failed-step
+    messages, error evidence from ALL steps, and the debugger's stated
+    cause, most specific (longest) first, capped so the search stays cheap.
+
+    Console/network errors count even when their step passed: a weak plan
+    can click through a 500 (step "passed") while the backend traceback
+    sitting in console output names the real defect.
     """
     blobs: list[str] = []
     for r in results:
-        if r.status == "passed":
-            continue
-        blobs.append(r.message)
         if r.evidence:
             blobs.extend(r.evidence.console_errors)
             blobs.extend(r.evidence.network_errors)
+        if r.status == "passed":
+            continue
+        blobs.append(r.message)
     if analysis:
         blobs.append(analysis.probable_root_cause)
         blobs.extend(analysis.evidence)
