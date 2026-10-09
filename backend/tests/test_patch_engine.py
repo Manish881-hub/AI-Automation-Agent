@@ -71,6 +71,40 @@ def test_malformed_model_response_rejected(tool):
         build_diff(tool, [PatchEdit(file="backend/auth.py", old_text="  ", new_text="x")])
 
 
+def test_apply_patch_changes_content_in_nested_repo_workspace(tmp_path):
+    """Regression: a workspace nested in a repo must really apply.
+
+    `git apply` invoked in a repo subdirectory silently skips patches it
+    treats as out of scope (exit 0, no changes). The tool must scope the
+    invocation so the edit lands in the workspace file.
+    """
+    import subprocess
+
+    repo = tmp_path / "repo"
+    ws = repo / "demo" / "app"
+    ws.mkdir(parents=True)
+    target = ws / "svc.py"
+    target.write_text('token = response["token"]\n')
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t.t", "-c", "user.name=t",
+         "commit", "-qm", "init"],
+        cwd=repo, check=True,
+    )
+    nested = CodebaseTool(str(ws))
+    edits = [PatchEdit(
+        file="svc.py",
+        old_text='token = response["token"]',
+        new_text='token = response.get("token")',
+    )]
+    diff = build_diff(nested, edits)
+    ok, _ = nested.apply_check(diff)
+    assert ok
+    nested.apply_patch(diff)
+    assert target.read_text() == 'token = response.get("token")\n'
+
+
 def test_fixture_auth_edit_applies_cleanly(tool):
     # The exact intent the fixer must express for the eval to pass.
     edits = [

@@ -126,11 +126,40 @@ class CodebaseTool:
 
     # --- gated writes: called only after human approval upstream ---
 
+    def _apply_scope(self) -> tuple[Path, list[str], bool]:
+        """cwd, extra args, and in-repo flag for `git apply`.
+
+        `git apply` resolves patch paths against the repo toplevel and
+        silently SKIPS patches outside the invocation cwd. Our diffs are
+        relative to the workspace root, so when the workspace is nested
+        inside a repo we must run git at the toplevel with
+        --directory=<workspace-prefix>; otherwise valid patches are
+        skipped with exit 0 and nothing changes.
+        """
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], cwd=self.root,
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return self.root, [], False
+        if proc.returncode != 0:
+            return self.root, [], False
+        toplevel = Path(proc.stdout.strip())
+        try:
+            prefix = self.root.relative_to(toplevel).as_posix()
+        except ValueError:
+            return self.root, [], False
+        if prefix in ("", "."):
+            return self.root, [], True
+        return toplevel, [f"--directory={prefix}"], True
+
     def apply_check(self, diff_text: str) -> tuple[bool, str]:
         """Dry-run `git apply --check` with whitespace errors on. Mutates nothing."""
+        cwd, extra, _ = self._apply_scope()
         proc = subprocess.run(
-            ["git", "apply", "--check", "--whitespace=error", "-"], input=diff_text,
-            cwd=self.root, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            ["git", "apply", "--check", "--whitespace=error", *extra, "-"], input=diff_text,
+            cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
         )
         out = redact_secrets((proc.stdout + proc.stderr).strip()[-2000:])
         return proc.returncode == 0, out
@@ -183,12 +212,19 @@ class CodebaseTool:
         return self._git("checkout", "-b", name)
 
     def apply_patch(self, diff_text: str) -> str:
+        cwd, extra, in_repo = self._apply_scope()
         proc = subprocess.run(
-            ["git", "apply", "-"], input=diff_text,
-            cwd=self.root, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            ["git", "apply", *extra, "-"], input=diff_text,
+            cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
         )
         if proc.returncode != 0:
             raise RuntimeError(
                 redact_secrets((proc.stdout + proc.stderr).strip()[-2000:])
             )
-        return self._git("status", "--short")
+        status = self._git("status", "--short")
+        if in_repo and not status.strip():
+            # git apply skips out-of-scope patches with exit 0; a valid
+            # proposal must change something, so silence means mis-scoped
+            # paths, never a successful application.
+            raise RuntimeError("git apply made no changes; patch paths out of scope")
+        return status
