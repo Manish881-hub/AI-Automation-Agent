@@ -60,6 +60,15 @@ Check health: `curl http://localhost:8001/health` → `{"status":"ok"}`.
 One cheap LLM ping before a full run saves time if free-model quota
 (`429 free-models-per-day`) is exhausted — wait for reset, don't loop.
 
+Troubleshooting:
+- `pip install` fails building `greenlet` (`g++` missing, or packages land
+  under Python 3.14 user site-packages): skip the reinstall. The repo's
+  `backend/.venv` (Python 3.12) already has every dependency — run it
+  directly with `backend/.venv/bin/python -m uvicorn ...` instead of
+  activating and reinstalling.
+- `address already in use` on `:8001`: the backend is already running.
+  Reuse it (check `/health`) or stop that process before starting another.
+
 ### 3. Frontend
 
 ```bash
