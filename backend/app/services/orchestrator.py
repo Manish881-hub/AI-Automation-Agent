@@ -22,7 +22,10 @@ from ..services.session import session_store, Session
 
 
 MAX_STEPS = 12
-PLANNER_TIMEOUT_SEC = 120
+# Stage budget must exceed the LLM retry budget (llm_max_attempts slow
+# calls plus capped backoff/Retry-After waits), or resilience is strangled
+# by this timeout and every congested provider looks like a planner bug.
+PLANNER_TIMEOUT_SEC = 300
 PLANNER_MAX_REVISIONS = 2
 MAX_FIX_ATTEMPTS = 2
 STEP_TIMEOUT_SEC = 60
@@ -449,9 +452,15 @@ class Orchestrator:
                 self._record(run, session, "fixer", "propose_failed", str(exc)[:300])
                 break
             if not proposal.edits:
+                # One bounded retry, same as a rejected edit: cheap models
+                # sometimes return an explanation with no edit intents.
                 self._record(run, session, "fixer", "propose_failed", "empty edit list")
+                feedback = (
+                    "Your previous reply contained no edits. Reply with the "
+                    "FULL corrected JSON including the edits array."
+                )
                 proposal = None
-                break
+                continue
             try:
                 diff = await asyncio.to_thread(build_diff, tool, proposal.edits)
             except PatchEngineError as exc:

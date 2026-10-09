@@ -74,6 +74,22 @@ describe("getChecklist", () => {
     }
   });
 
+  it("settles debugger/report on a failed run that has a plan but no results", () => {
+    const run: RunView = {
+      status: "failed",
+      plan: { steps: [{ id: 1, action: "navigate", target: "x" }] },
+      results: [],
+      analysis: null,
+      report: null,
+      website: { title: "Acme Portal" },
+      error_stage: "planning",
+      error_message: "plan rejected",
+    };
+    const states = new Map(getChecklist(run, []).map((i) => [i.id, i]));
+    expect(states.get("debug")?.state).toBe("skipped");
+    expect(states.get("report")?.state).toBe("skipped");
+  });
+
   it("keeps the fix approval gate actionable when awaiting approval", () => {
     const run: RunView = {
       status: "completed",

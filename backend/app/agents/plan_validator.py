@@ -76,7 +76,9 @@ class PlanValidatorAgent:
         elif not _has_verifiable_condition(last):
             reasons.append("final assertion has no verifiable condition (empty expected/target)")
         else:
-            text = f"{last.target} {last.expected}".lower()
+            # Scan all text fields: a url assertion carries its signal in
+            # value (the URL itself), not in target/expected.
+            text = f"{last.target} {last.value} {last.expected}".lower()
             if any(err in text for err in _ERROR_SIGNALS):
                 reasons.append(
                     "final assertion verifies an error state, not objective success"
@@ -91,7 +93,7 @@ class PlanValidatorAgent:
             for s in steps[:-1]:
                 if s.action != "assert":
                     continue
-                atext = f"{s.target} {s.expected}".lower()
+                atext = f"{s.target} {s.value} {s.expected}".lower()
                 if keywords and any(k in atext for k in keywords) and not any(
                     err in atext for err in _ERROR_SIGNALS
                 ):
