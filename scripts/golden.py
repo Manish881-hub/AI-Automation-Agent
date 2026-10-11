@@ -58,7 +58,16 @@ def api(method, path, body=None):
     req = urllib.request.Request(
         BACKEND + path,
         data=json.dumps(body).encode() if body is not None else None,
-        method=method, headers={"Content-Type": "application/json"})
+        method=method,
+        # The run itself is created and approved through the browser UI.
+        # Polling uses a separate urllib client, which cannot share that
+        # browser's HttpOnly cookie; authenticate these read-only status
+        # requests with the existing operator credential instead. The value
+        # remains in memory only and is never printed or written to artifacts.
+        headers={
+            "Content-Type": "application/json",
+            "X-Approval-Token": TOKEN,
+        })
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
 
