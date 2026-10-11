@@ -23,6 +23,20 @@ class Settings(BaseSettings):
     # until a token is configured — because the gate decides whose code
     # gets applied, and an unconfigured server must never apply code.
     approval_token: str = ""
+    # Test-execution sandbox. Docker is the only supported backend for
+    # untrusted workspace code; local execution is a development-only,
+    # explicitly insecure fallback (no filesystem/network isolation) that
+    # stays disabled unless ALLOW_INSECURE_LOCAL_EXEC=true.
+    sandbox_enabled: bool = True
+    sandbox_image: str = "agent-sandbox:1.0"
+    allow_insecure_local_exec: bool = False
+    sandbox_memory: str = "512m"
+    sandbox_cpus: str = "1.0"
+    sandbox_pids_limit: int = 64
+    # Browser verification launches the workspace's own server.py on the
+    # host. True for the trusted local fixture; set False for untrusted
+    # customer code — verification then refuses instead of executing it.
+    trust_workspace_server: bool = True
     # OpenRouter fallback routing: comma-separated extra model ids tried by
     # OpenRouter itself when the primary is rate-limited or unavailable.
     # Sent via the OpenAI SDK's extra_body {"models": [...]} mechanism, so

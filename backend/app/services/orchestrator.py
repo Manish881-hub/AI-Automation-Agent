@@ -695,7 +695,19 @@ class Orchestrator:
                 f"{branch} at {base[:8]} (main checkout untouched)",
             )
             tool = CodebaseTool(str(wt_ws))
-            runner = TestRunnerTool(str(wt_ws), timeout=settings.test_timeout_sec)
+            from ..tools.sandbox import SandboxUnavailable, select_runner
+            try:
+                runner = await asyncio.to_thread(
+                    select_runner,
+                    str(wt_ws), settings.test_timeout_sec,
+                    lambda msg: self._record(run, session, "test_runner", "insecure_mode", msg),
+                )
+            except SandboxUnavailable as exc:
+                raise WorktreeError(str(exc))
+            self._record(
+                run, session, "test_runner", "runner_selected",
+                type(runner).__name__,
+            )
             throw_if_cancelled(run, "apply")
             status = await asyncio.to_thread(tool.apply_patch, run.fix_diff)
             self._record(run, session, "fixer", "patch_applied", status[:200])
@@ -856,8 +868,19 @@ class Orchestrator:
         steps = list((run.plan.steps if run.plan else [])[:MAX_STEPS])
         try:
             wt_ws = self._fix_workspace(run)
-            if (wt_ws is not None and is_loopback(run.url)
-                    and (wt_ws / FIXTURE_SERVER).is_file()):
+            serve_local = (
+                wt_ws is not None and is_loopback(run.url)
+                and (wt_ws / FIXTURE_SERVER).is_file()
+            )
+            if serve_local and not settings.trust_workspace_server:
+                # Explicit refusal beats silent fallback: executing
+                # workspace server code on the host is arbitrary-code
+                # execution, and the isolated-server stage is not built yet.
+                raise WorktreeError(
+                    "refusing to execute untrusted workspace server code "
+                    "on the host (trust_workspace_server is off)"
+                )
+            if serve_local:
                 port = find_free_port()
                 log_file = run_dir(run.run_id) / "fix_server.log"
                 server_proc = await asyncio.to_thread(
