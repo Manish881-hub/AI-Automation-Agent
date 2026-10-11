@@ -23,6 +23,7 @@ from ..services.llm import (
 from ..config import settings
 from ..tools.browser import BrowserTool
 from ..tools.codebase import CodebaseTool
+from ..tools.sandbox import DockerServerRunner, SandboxUnavailable, docker_available
 from ..tools.testrunner import TestRunnerTool
 from ..tools.worktree import (
     WorktreeError, FIXTURE_SERVER, is_loopback, launch_fixture_server,
@@ -864,6 +865,7 @@ class Orchestrator:
         validator = ValidatorAgent()
         browser = BrowserTool()
         results: list[StepResult] = []
+        server = None
         server_proc = None
         steps = list((run.plan.steps if run.plan else [])[:MAX_STEPS])
         try:
@@ -874,19 +876,16 @@ class Orchestrator:
             )
             if serve_local and not settings.trust_workspace_server:
                 # Explicit refusal beats silent fallback: executing
-                # workspace server code on the host is arbitrary-code
-                # execution, and the isolated-server stage is not built yet.
+                # workspace server code anywhere is arbitrary-code
+                # execution, and this workspace is not trusted.
                 raise WorktreeError(
                     "refusing to execute untrusted workspace server code "
-                    "on the host (trust_workspace_server is off)"
+                    "(trust_workspace_server is off)"
                 )
             if serve_local:
-                port = find_free_port()
-                log_file = run_dir(run.run_id) / "fix_server.log"
-                server_proc = await asyncio.to_thread(
-                    launch_fixture_server, wt_ws, port, log_file,
+                verify_base, server, server_proc = await self._start_verify_server(
+                    run, session, wt_ws
                 )
-                verify_base = f"http://127.0.0.1:{port}"
                 steps = [self._rewrite_step(s, run.url, verify_base) for s in steps]
                 mode = f"re-test worktree fixture at {verify_base}"
             else:
@@ -913,7 +912,9 @@ class Orchestrator:
                     f"-> {result.status}",
                 )
         finally:
-            if server_proc is not None:
+            if server is not None:
+                await asyncio.to_thread(server.stop)
+            elif server_proc is not None:
                 await asyncio.to_thread(stop_server, server_proc)
             try:
                 await browser.close()
@@ -922,6 +923,41 @@ class Orchestrator:
         verdict = VerifierAgent().run(run.objective, run.success_step_ids, results)
         save_text(run.run_id, "verify.json", verdict.model_dump_json(indent=2))
         return verdict.verified, verdict.reason
+
+    async def _start_verify_server(self, run: RunState, session: Session, wt_ws: Path):
+        """Isolated fixture server for this run's worktree. Docker when the
+        sandbox is enabled and the daemon answers; the explicit insecure
+        host fallback only on opt-in (loudly recorded); otherwise fail
+        closed. Returns (base_url, server_or_None, proc_or_None)."""
+        log_file = run_dir(run.run_id) / "fix_server.log"
+        if settings.sandbox_enabled and docker_available():
+            server = DockerServerRunner(
+                wt_ws, run.run_id, image=settings.sandbox_image,
+                memory=settings.sandbox_memory, cpus=settings.sandbox_cpus,
+                pids_limit=settings.sandbox_pids_limit, log_file=log_file,
+            )
+            base = await asyncio.to_thread(server.start)
+            self._record(
+                run, session, "verifier", "isolated_server",
+                f"{type(server).__name__} at {base}",
+            )
+            return base, server, None
+        if settings.allow_insecure_local_exec:
+            self._record(
+                run, session, "verifier", "insecure_mode",
+                "INSECURE host fixture server: no network or filesystem "
+                "isolation. Development only.",
+            )
+            port = find_free_port()
+            proc = await asyncio.to_thread(
+                launch_fixture_server, wt_ws, port, log_file,
+            )
+            return f"http://127.0.0.1:{port}", None, proc
+        raise WorktreeError(
+            "no isolated server backend: docker unavailable and "
+            "ALLOW_INSECURE_LOCAL_EXEC is not set; refusing to execute "
+            "workspace server code on the host"
+        )
 
     def reject_fix(self, run_id: str) -> RunState:
         run = self.runs.get(run_id)

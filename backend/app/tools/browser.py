@@ -22,8 +22,12 @@ class BrowserTool:
         self.network_errors: list[str] = []
 
     async def start(self):
+        from .environ import browser_env
+
         self.pw = await async_playwright().start()
-        self.browser = await self.pw.chromium.launch(headless=True)
+        # Explicit minimal environment for the browser process (never the
+        # backend's full environment); Chromium sandbox stays enabled.
+        self.browser = await self.pw.chromium.launch(headless=True, env=browser_env())
         self.page = await self.browser.new_page(viewport={"width": 1440, "height": 900})
         self.page.on("console", self._on_console)
         self.page.on("response", self._on_response)

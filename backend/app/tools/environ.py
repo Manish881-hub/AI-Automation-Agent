@@ -26,3 +26,15 @@ def pytest_env() -> dict[str, str]:
     """Test execution: minimal baseline, bytecode writes off so read-only
     checkouts stay runnable."""
     return minimal_env({"PYTHONDONTWRITEBYTECODE": "1"})
+
+
+def browser_env() -> dict[str, str]:
+    """Chromium process environment. The Playwright driver itself keeps the
+    host env (trusted Playwright code), but the browser — which runs page
+    JavaScript inside the Chromium sandbox — gets only this allowlist."""
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": os.path.expanduser("~"),
+        "LANG": "C.UTF-8",
+        "TZ": "UTC",
+    }

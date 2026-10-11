@@ -8,6 +8,11 @@ FROM python:3.12-slim-bookworm
 RUN pip install --no-cache-dir pytest==8.3.4 \
     && rm -rf /root/.cache
 
+# Localhost relay for fixture servers that bind 127.0.0.1 (see relay.py):
+# exposes the app on all container interfaces without touching the
+# fixture's own bind behavior. Used only by the isolated server runner.
+COPY relay.py /relay.py
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     LANG=C.UTF-8
 
