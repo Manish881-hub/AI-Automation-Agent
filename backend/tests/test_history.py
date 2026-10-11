@@ -92,13 +92,18 @@ def test_list_round_trip_newest_first(tmp_artifacts):
     assert [r["run_id"] for r in rows] == ids[::-1][:2]
 
 
-def test_list_endpoint_serves_index(tmp_artifacts):
+def test_list_endpoint_serves_index(tmp_artifacts, monkeypatch):
     from app.main import app
+    from app.config import settings
 
+    monkeypatch.setattr(settings, "approval_token", "op-token")
     orch = Orchestrator()
     run = _run(orch, status="completed")
     record_terminal(run, "run_completed")
-    resp = TestClient(app).get("/api/runs?limit=10")
+    anonymous = TestClient(app)
+    assert anonymous.get("/api/runs?limit=10").status_code == 401
+    resp = anonymous.get("/api/runs?limit=10",
+                         headers={"X-Approval-Token": "op-token"})
     assert resp.status_code == 200
     body = resp.json()
     assert [r["run_id"] for r in body["runs"]] == [run.run_id]

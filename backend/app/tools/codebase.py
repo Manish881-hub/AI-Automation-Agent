@@ -11,6 +11,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .environ import minimal_env
+
 # Never searched, read, or patched through the agent.
 DENY_DIRS = frozenset({
     ".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache",
@@ -110,6 +112,7 @@ class CodebaseTool:
     def _git(self, *args: str, timeout: int = GIT_TIMEOUT_SEC) -> str:
         proc = subprocess.run(
             ["git", *args], cwd=self.root, capture_output=True,
+            env=minimal_env(),
             text=True, timeout=timeout,
         )
         out = (proc.stdout + proc.stderr).strip()
@@ -139,7 +142,8 @@ class CodebaseTool:
         try:
             proc = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"], cwd=self.root,
-                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+                capture_output=True, env=minimal_env(),
+                text=True, timeout=GIT_TIMEOUT_SEC,
             )
         except (OSError, subprocess.TimeoutExpired):
             return self.root, [], False
@@ -159,7 +163,8 @@ class CodebaseTool:
         cwd, extra, _ = self._apply_scope()
         proc = subprocess.run(
             ["git", "apply", "--check", "--whitespace=error", *extra, "-"], input=diff_text,
-            cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            cwd=cwd, capture_output=True,
+            env=minimal_env(), text=True, timeout=GIT_TIMEOUT_SEC,
         )
         out = redact_secrets((proc.stdout + proc.stderr).strip()[-2000:])
         return proc.returncode == 0, out
@@ -169,7 +174,8 @@ class CodebaseTool:
         try:
             proc = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=self.root,
-                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+                capture_output=True, env=minimal_env(),
+                text=True, timeout=GIT_TIMEOUT_SEC,
             )
             return proc.stdout.strip() if proc.returncode == 0 else ""
         except (OSError, subprocess.TimeoutExpired):
@@ -180,7 +186,8 @@ class CodebaseTool:
         try:
             proc = subprocess.run(
                 ["git", "status", "--porcelain"], cwd=self.root,
-                capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+                capture_output=True, env=minimal_env(),
+                text=True, timeout=GIT_TIMEOUT_SEC,
             )
             return any(
                 line and not line.startswith("??")
@@ -196,11 +203,12 @@ class CodebaseTool:
         rels = [str(self._resolve(p).relative_to(self.root)) for p in paths]
         subprocess.run(
             ["git", "add", "--", *rels], cwd=self.root, check=True,
-            capture_output=True, timeout=GIT_TIMEOUT_SEC,
+            capture_output=True, env=minimal_env(), timeout=GIT_TIMEOUT_SEC,
         )
         proc = subprocess.run(
             ["git", "commit", "-m", message], cwd=self.root,
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            capture_output=True, env=minimal_env(),
+            text=True, timeout=GIT_TIMEOUT_SEC,
         )
         if proc.returncode != 0:
             raise RuntimeError(redact_secrets((proc.stdout + proc.stderr).strip()[-2000:]))
@@ -215,7 +223,8 @@ class CodebaseTool:
         cwd, extra, in_repo = self._apply_scope()
         proc = subprocess.run(
             ["git", "apply", *extra, "-"], input=diff_text,
-            cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+            cwd=cwd, capture_output=True,
+            env=minimal_env(), text=True, timeout=GIT_TIMEOUT_SEC,
         )
         if proc.returncode != 0:
             raise RuntimeError(

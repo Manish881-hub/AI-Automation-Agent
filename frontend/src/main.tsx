@@ -46,6 +46,7 @@ function App() {
   const [cancelBusy, setCancelBusy] = useState(false)
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [tokenRequired, setTokenRequired] = useState(false)
+  const [needAuth, setNeedAuth] = useState(false)
   const [opPassword, setOpPassword] = useState('')
   const [opBusy, setOpBusy] = useState(false)
 
@@ -71,6 +72,8 @@ function App() {
       })
       if (res.ok) {
         setOpPassword('')
+        setNeedAuth(false)
+        setFixError('')
         await refreshAuth()
       } else {
         setFixError('operator sign-in failed')
@@ -130,13 +133,23 @@ function App() {
     setLoading(true)
     setRun(null)
     setEvents([])
-    const res = await fetch(apiUrl('/api/runs'), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url, objective})
-    })
-    const data = await res.json()
-    setRun(data)
-    setLoading(false)
+    setFixError('')
+    try {
+      const res = await fetch(apiUrl('/api/runs'), {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url, objective})
+      })
+      if (res.status === 401) {
+        setAuthed(false)
+        setNeedAuth(true)
+        setFixError('starting a run needs operator sign-in')
+        return
+      }
+      const data = await res.json()
+      setRun(data)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -151,6 +164,12 @@ function App() {
         fetch(apiUrl(`/api/runs/${run.run_id}`)),
         fetch(apiUrl(`/api/runs/${run.run_id}/events`))
       ])
+      if (r.status === 401 || e.status === 401) {
+        setAuthed(false)
+        setNeedAuth(true)
+        setFixError('session expired — sign in again to keep watching this run')
+        return
+      }
       setRun(await r.json())
       setEvents((await e.json()).events)
     }, 1200)
@@ -213,7 +232,7 @@ function App() {
         })()}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
-      {run.fix_status && run.fix_status !== 'none' && run.fix_status === 'awaiting_approval' && tokenRequired && !authed && (
+      {tokenRequired && !authed && (needAuth || (run.fix_status && run.fix_status !== 'none' && run.fix_status === 'awaiting_approval')) && (
         <section className="card" aria-label="operator sign-in">
           <h2>operator sign-in</h2>
           <p className="muted">approving a fix requires operator sign-in — the token stays server-side, never in this page</p>

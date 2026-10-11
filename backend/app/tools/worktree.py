@@ -19,6 +19,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from .environ import minimal_env
+
 GIT_TIMEOUT_SEC = 30
 SERVER_START_TIMEOUT_SEC = 25
 FIXTURE_SERVER = "server.py"
@@ -30,7 +32,8 @@ class WorktreeError(RuntimeError):
 
 def _git(repo: Path, *args: str, timeout: int = GIT_TIMEOUT_SEC) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, timeout=timeout,
+        ["git", *args], cwd=repo, capture_output=True,
+            env=minimal_env(), text=True, timeout=timeout,
     )
 
 
@@ -128,6 +131,7 @@ def launch_fixture_server(workspace: Path, port: int, log_file: Path):
         proc = subprocess.Popen(
             [sys.executable, FIXTURE_SERVER, str(port)], cwd=workspace,
             stdout=log, stderr=subprocess.STDOUT,
+            env=minimal_env(),  # fixture code never sees host secrets
         )
     try:
         deadline = time.time() + SERVER_START_TIMEOUT_SEC

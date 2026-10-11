@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from .codebase import redact_secrets
+from .environ import pytest_env
 
 TEST_TIMEOUT_SEC = 180
 MAX_OUTPUT_CHARS = 8000
@@ -39,6 +40,7 @@ class TestRunnerTool:
         proc = subprocess.Popen(
             cmd, cwd=self.root, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
+            env=pytest_env(),  # never the host environment: no secrets leak in
         )
         deadline = time.monotonic() + self.timeout
         cancelled = False

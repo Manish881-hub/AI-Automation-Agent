@@ -95,6 +95,22 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1400, "height": 1000})
     page.goto(FRONTEND, wait_until="networkidle")
+    # Operator sign-in first: run creation is authenticated, and the
+    # session cookie (HttpOnly, same-origin) carries every later call.
+    # The token is evaluated inside the page exactly once and never logged.
+    authed = page.evaluate(
+        """async (token) => {
+             const r = await fetch('/api/auth/login', {
+               method: 'POST', headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({token}) });
+             return r.ok;
+           }""",
+        TOKEN,
+    )
+    if not authed:
+        print("GOLDEN_FAIL: operator sign-in failed")
+        sys.exit(1)
+    print("OPERATOR_SIGNED_IN", flush=True)
     page.fill("label:has-text('client website') input", TARGET_URL)
     page.fill("label:has-text('test objective') textarea", OBJECTIVE)
     with page.expect_response("**/api/runs") as resp_info:
@@ -135,13 +151,18 @@ with sync_playwright() as p:
                         full_page=True)
         print(f"proposal screenshot fallback: {e}", flush=True)
 
-    # Operator sign-in through the real UI session flow.
-    page.locator("section[aria-label='operator sign-in']").wait_for(timeout=30000)
-    page.fill("section[aria-label='operator sign-in'] input[type='password']", TOKEN)
-    page.click("section[aria-label='operator sign-in'] button[type='submit'], "
-               "section[aria-label='operator sign-in'] button:not([type])")
-    page.locator("text=operator signed in").wait_for(timeout=15000)
-    print("OPERATOR_SIGNED_IN", flush=True)
+    # Operator sign-in through the real UI session flow — only if the
+    # session from the start of the run is gone (the card renders solely
+    # for signed-out operators at approval time).
+    try:
+        page.locator("section[aria-label='operator sign-in']").wait_for(timeout=10000)
+        page.fill("section[aria-label='operator sign-in'] input[type='password']", TOKEN)
+        page.click("section[aria-label='operator sign-in'] button[type='submit'], "
+                   "section[aria-label='operator sign-in'] button:not([type])")
+        page.locator("text=operator signed in").wait_for(timeout=15000)
+        print("OPERATOR_SIGNED_IN (approval-time)", flush=True)
+    except Exception:
+        print("OPERATOR_SESSION_STILL_VALID", flush=True)
 
     # Approve through the real UI button.
     page.click("section.card.fix button:has-text('approve fix')")

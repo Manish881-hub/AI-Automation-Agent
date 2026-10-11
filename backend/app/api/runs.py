@@ -29,26 +29,32 @@ def require_approval(request: Request) -> None:
 
 
 @router.get("", response_model=None)
-async def list_runs(limit: int = Query(default=50, ge=1, le=200)):
+async def list_runs(request: Request, limit: int = Query(default=50, ge=1, le=200)):
     """Durable history: terminal-transition summaries, newest first.
 
     Survives backend restarts (the index is append-only on disk), unlike
-    the live per-run endpoints which only know in-memory runs.
+    the live per-run endpoints which only know in-memory runs. Operator
+    authentication required: history contains client objectives and diffs.
     """
+    require_approval(request)
     return {"runs": read_history(limit=limit)}
 
 
 @router.post("", response_model=TestRunResponse, status_code=202)
-async def create_run(request: TestRunRequest):
-    # request.url is already normalized by TestRunRequest validation;
+async def create_run(request: Request, body: TestRunRequest):
+    # Every run spends shared LLM budget, so creating one is a privileged
+    # operator action like approval — not an anonymous endpoint.
+    require_approval(request)
+    # body.url is already normalized by TestRunRequest validation;
     # normalize again defensively (idempotent) before storing.
-    run = orchestrator.create_run(normalize_url(str(request.url)), request.objective)
+    run = orchestrator.create_run(normalize_url(str(body.url)), body.objective)
     asyncio.create_task(orchestrator.execute(run.run_id))
     return TestRunResponse(run_id=run.run_id, status=run.status, objective=run.objective, url=run.url)
 
 
 @router.get("/{run_id}", response_model=TestRunResponse)
-async def get_run(run_id: str):
+async def get_run(run_id: str, request: Request):
+    require_approval(request)
     run = orchestrator.runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -126,7 +132,8 @@ async def cancel_run(run_id: str, request: Request):
 
 
 @router.get("/{run_id}/events")
-async def get_events(run_id: str):
+async def get_events(run_id: str, request: Request):
+    require_approval(request)
     run = orchestrator.runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")

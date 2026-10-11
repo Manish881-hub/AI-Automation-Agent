@@ -94,9 +94,11 @@ Open `http://localhost:5173`.
   reports `verified` only if both gates pass.
 
 A scripted version of this flow lives at `scripts/golden.py`. With all
-three services up and `APPROVAL_TOKEN` in `backend/.env` (the script signs
-in through the real UI session flow; the token is read at runtime and never
-printed or recorded), run from the repo root:
+three services up and `APPROVAL_TOKEN` in `backend/.env`, run from the
+repo root (the script signs in through the real UI session flow first —
+run creation is authenticated — then again at approval time only if the
+session lapsed; the token is read at runtime and never printed or
+recorded):
 
 ```bash
 backend/.venv/bin/python scripts/golden.py
