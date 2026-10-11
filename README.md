@@ -93,8 +93,21 @@ Open `http://localhost:5173`.
 - The agent branches, patches, runs pytest, re-tests in the browser, and
   reports `verified` only if both gates pass.
 
-A scripted version of this flow lives at `/tmp/opencode/golden.py`
-(local machine only, not committed).
+A scripted version of this flow lives at `scripts/golden.py`. With all
+three services up and `APPROVAL_TOKEN` in `backend/.env` (the script signs
+in through the real UI session flow; the token is read at runtime and never
+printed or recorded), run from the repo root:
+
+```bash
+backend/.venv/bin/python scripts/golden.py
+```
+
+It creates the run through the UI, waits for `awaiting_approval`,
+screenshots the proposal, signs in as operator, approves through the UI,
+then asserts `fix_status=verified` with a passing browser re-test.
+Screenshots land in the run's artifact directory. One deliberate attempt
+per session: on provider quota/rate-limit errors, stop and report instead
+of resubmitting.
 
 ## Golden run walkthrough (reference: run `463d968d`)
 

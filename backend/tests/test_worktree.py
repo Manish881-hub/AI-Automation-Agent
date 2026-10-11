@@ -232,6 +232,12 @@ def test_rewrite_step_origins():
     url_assert = TestStep(id=6, action="assert", assertion_type="url",
                           target="URL Bar", value="http://localhost:8921/dashboard")
     assert Orchestrator._rewrite_step(url_assert, run_url, base).value == base + "/dashboard"
+    url_expected = TestStep(id=6, action="assert", assertion_type="url",
+                            target="Current URL", value="",
+                            expected="http://localhost:8921/dashboard")
+    out_expected = Orchestrator._rewrite_step(url_expected, run_url, base)
+    assert out_expected.expected == base + "/dashboard"
+    assert out_expected.target == "Current URL"  # non-URL text untouched
     text_assert = TestStep(id=2, action="assert", assertion_type="text",
                            target="Welcome", value="Welcome")
     out = Orchestrator._rewrite_step(text_assert, run_url, base)

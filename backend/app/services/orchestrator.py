@@ -817,20 +817,23 @@ class Orchestrator:
     def _rewrite_step(step: TestStep, run_url: str, verify_base: str) -> TestStep:
         """Retarget one replay step at the worktree fixture server.
 
-        Only navigate targets and url-assertion values whose origin matches
-        the original run URL are rewritten; everything else (including
-        external links) passes through untouched.
+        Navigate targets are rewritten; on url assertions every text field
+        is retargeted, since models place the URL in target, value, or
+        expected interchangeably. Only same-origin URLs move — everything
+        else (including external links) passes through untouched.
         """
         update: dict = {}
         if step.action == "navigate" and step.target:
             new_target = rewrite_origin(step.target, run_url, verify_base)
             if new_target != step.target:
                 update["target"] = new_target
-        if (step.action == "assert" and step.assertion_type == "url"
-                and step.value):
-            new_value = rewrite_origin(step.value, run_url, verify_base)
-            if new_value != step.value:
-                update["value"] = new_value
+        if step.action == "assert" and step.assertion_type == "url":
+            for field in ("target", "value", "expected"):
+                current = getattr(step, field, "") or ""
+                if current:
+                    rewritten = rewrite_origin(current, run_url, verify_base)
+                    if rewritten != current:
+                        update[field] = rewritten
         return step.model_copy(update=update) if update else step
 
     async def _verify_fix(self, run: RunState, session: Session) -> tuple[bool, str]:
