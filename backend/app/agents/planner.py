@@ -2,8 +2,37 @@ from ..schemas import TestPlan, WebsiteSnapshot
 from ..services.llm import LLM
 
 
+SYSTEM_PROMPT = """You are a senior QA automation planner. Create a small, executable web test plan.
+Return JSON matching the requested schema. Keep the plan to at most 8 steps.
+Rules:
+- Only use actions: navigate, click, fill, press, assert.
+- For `navigate`, set `target` to the exact Website URL supplied below. It
+  must be a full http(s) URL, never a semantic label such as "navigate",
+  "home", or "login".
+- All other targets must be SEMANTIC (visible button text, link text, input
+  label or placeholder) taken from the website context below — never invent
+  CSS selectors. The browser adapter resolves semantic targets deterministically.
+- Prefer targets that literally appear in the website context.
+- For fill steps on login credentials use placeholders {{TEST_EMAIL}} and
+  {{TEST_PASSWORD}} as the value; use real visible text for anything else.
+- For assert, set assertion_type explicitly: text (default), visible,
+  url, title, element, no_console_error, or http_success. Use url/title
+  assertions for navigation outcomes, visible for element presence."""
+
+REVISION_SYSTEM_PROMPT = """You are a senior QA automation planner revising a rejected test plan.
+Return JSON matching the requested schema: the FULL corrected plan, at most 8 steps.
+Rules: start with navigate; For `navigate`, use the exact Website URL supplied
+below as its full http(s) `target`, never a semantic label. End with an assert
+that verifies OBJECTIVE SUCCESS (a reachable page, element, or URL — never an
+error message or error state). All other targets must be semantic and taken
+from the website context; login credentials use {{TEST_EMAIL}} /
+{{TEST_PASSWORD}}."""
+
+
 class PlannerAgent:
     name = "planner"
+    system_prompt = SYSTEM_PROMPT
+    revision_system_prompt = REVISION_SYSTEM_PROMPT
 
     async def run(
         self,
@@ -12,19 +41,6 @@ class PlannerAgent:
         objective: str,
         website_context: WebsiteSnapshot | None = None,
     ) -> TestPlan:
-        system = """You are a senior QA automation planner. Create a small, executable web test plan.
-Return JSON matching the requested schema. Keep the plan to at most 8 steps.
-Rules:
-- Only use actions: navigate, click, fill, press, assert.
-- Targets must be SEMANTIC (visible button text, link text, input label or
-  placeholder) taken from the website context below — never invent CSS
-  selectors. The browser adapter resolves semantic targets deterministically.
-- Prefer targets that literally appear in the website context.
-- For fill steps on login credentials use placeholders {{TEST_EMAIL}} and
-  {{TEST_PASSWORD}} as the value; use real visible text for anything else.
-- For assert, set assertion_type explicitly: text (default), visible,
-  url, title, element, no_console_error, or http_success. Use url/title
-  assertions for navigation outcomes, visible for element presence."""
         if website_context is not None:
             context = self._format_context(website_context)
             user = (
@@ -33,7 +49,7 @@ Rules:
             )
         else:
             user = f"Website: {url}\nObjective: {objective}"
-        return await llm.structured(system, user, TestPlan)
+        return await llm.structured(self.system_prompt, user, TestPlan)
 
     async def revise(
         self,
@@ -44,12 +60,6 @@ Rules:
         plan: TestPlan,
         rejection_reasons: list[str],
     ) -> TestPlan:
-        system = """You are a senior QA automation planner revising a rejected test plan.
-Return JSON matching the requested schema: the FULL corrected plan, at most 8 steps.
-Rules: start with navigate; end with an assert that verifies OBJECTIVE SUCCESS
-(a reachable page, element, or URL — never an error message or error state);
-targets must be semantic and taken from the website context; login credentials
-use {{TEST_EMAIL}} / {{TEST_PASSWORD}}."""
         context = self._format_context(website_context) if website_context else "(none)"
         user = (
             f"Website: {url}\nObjective: {objective}\n\n"
@@ -58,7 +68,7 @@ use {{TEST_EMAIL}} / {{TEST_PASSWORD}}."""
             f"Rejection reasons (fix every one):\n"
             + "\n".join(f"- {r}" for r in rejection_reasons)
         )
-        return await llm.structured(system, user, TestPlan)
+        return await llm.structured(self.revision_system_prompt, user, TestPlan)
 
     def _format_context(self, snapshot: WebsiteSnapshot) -> str:
         lines = [f"Title: {snapshot.title}"]

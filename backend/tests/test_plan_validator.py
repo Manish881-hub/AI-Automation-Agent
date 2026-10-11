@@ -7,6 +7,7 @@ fields keeps the bar (signals required, error states rejected) intact.
 """
 
 from app.agents.plan_validator import PlanValidatorAgent
+from app.agents.planner import PlannerAgent
 from app.schemas import TestPlan
 
 OBJECTIVE = "verify that a user can sign in and reach the dashboard"
@@ -86,3 +87,28 @@ def test_plan_step_limit_defaults_to_eight():
 
     assert not validation.approved
     assert any("limit is 8" in reason for reason in validation.reasons)
+
+
+def test_exact_rejected_navigate_shape_is_not_a_url():
+    """Regression: the local run produced target='navigate' for step one."""
+    plan = _plan({
+        "action": "assert", "assertion_type": "visible",
+        "target": "Dashboard", "reason": "dashboard is visible",
+    })
+    plan.steps[0].target = "navigate"
+
+    validation = PlanValidatorAgent().validate(
+        plan, OBJECTIVE, allowed_url="http://localhost:8921/"
+    )
+
+    assert not validation.approved
+    assert "step 1 has an invalid navigation URL" in validation.reasons
+
+
+def test_planner_prompt_makes_navigate_target_a_url_not_a_semantic_label():
+    """The model must not apply the semantic-target rule to navigate steps."""
+    planner = PlannerAgent()
+
+    assert "For `navigate`, set `target` to the exact Website URL" in planner.system_prompt
+    assert "All other targets must be SEMANTIC" in planner.system_prompt
+    assert "For `navigate`, use the exact Website URL" in planner.revision_system_prompt

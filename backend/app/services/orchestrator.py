@@ -208,6 +208,10 @@ class Orchestrator:
                 # Re-raise with the true stage so the outer handler cannot
                 # mislabel a slow free-tier model as a run-budget timeout.
                 raise RuntimeError(f"planner timed out after {PLANNER_TIMEOUT_SEC}s")
+            # Preserve every model candidate. `plan.json` remains the current
+            # candidate for compatibility, while these immutable artifacts let
+            # an operator distinguish malformed output from validator policy.
+            save_text(run.run_id, "plan_initial.json", run.plan.model_dump_json(indent=2))
             save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
             self._record(run, session, "planner", "plan_generated", f"{len(run.plan.steps)} steps")
 
@@ -222,6 +226,11 @@ class Orchestrator:
                 self._record(
                     run, session, "plan_validator", "plan_rejected",
                     "; ".join(validation.reasons),
+                )
+                save_text(
+                    run.run_id,
+                    f"plan_rejected_attempt{revisions + 1}.json",
+                    run.plan.model_dump_json(indent=2),
                 )
                 try:
                     try:
@@ -247,6 +256,11 @@ class Orchestrator:
                     )
                     continue
                 revisions += 1
+                save_text(
+                    run.run_id,
+                    f"plan_repair_attempt{revisions}.json",
+                    run.plan.model_dump_json(indent=2),
+                )
                 save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
                 validation = validator.validate(
                     run.plan, run.objective, MAX_STEPS, allowed_url=run.url
