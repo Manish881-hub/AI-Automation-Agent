@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from ..schemas import PlanValidation, TestPlan
 
 
@@ -48,7 +50,11 @@ class PlanValidatorAgent:
     name = "plan_validator"
 
     def validate(
-        self, plan: TestPlan | None, objective: str, max_steps: int = 12
+        self,
+        plan: TestPlan | None,
+        objective: str,
+        max_steps: int = 8,
+        allowed_url: str = "",
     ) -> PlanValidation:
         reasons: list[str] = []
         if plan is None or not plan.steps:
@@ -60,9 +66,19 @@ class PlanValidatorAgent:
         if steps[0].action != "navigate":
             reasons.append("plan must start with a navigate step")
 
+        allowed_origin = _origin(allowed_url) if allowed_url else ""
         for s in steps:
             if s.action in ("click", "fill", "press") and not s.target.strip():
                 reasons.append(f"step {s.id} ({s.action}) has an empty target")
+            if s.action == "navigate":
+                target_origin = _origin(s.target)
+                if not target_origin:
+                    reasons.append(f"step {s.id} has an invalid navigation URL")
+                elif allowed_origin and target_origin != allowed_origin:
+                    reasons.append(
+                        f"step {s.id} navigates outside the client origin "
+                        f"({target_origin} != {allowed_origin})"
+                    )
             haystack = f"{s.target} {s.value} {s.expected}".lower()
             for bad in _DESTRUCTIVE_SIGNALS:
                 if bad in haystack:
@@ -106,3 +122,23 @@ class PlanValidatorAgent:
             reasons=[f"plan verifies objective via step(s) {sorted(set(success_ids))}"],
             success_step_ids=sorted(set(success_ids)) or [last.id],
         )
+
+
+def _origin(url: str) -> str:
+    """Return a normalized web origin or an empty value for invalid URLs.
+
+    The planner is allowed to navigate only inside the client site supplied
+    by the operator. This prevents a model-produced test plan from silently
+    sending the browser (and any test credentials) to another origin.
+    """
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    default_port = 80 if parsed.scheme == "http" else 443
+    return f"{parsed.scheme}://{parsed.hostname.lower()}:{port or default_port}"

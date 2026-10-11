@@ -35,7 +35,9 @@ from ..services.artifacts import run_dir, save_text
 from ..services.session import session_store, Session
 
 
-MAX_STEPS = 12
+# Keep the executable policy aligned with the planner prompt. A compact plan
+# is easier to review, less likely to wander, and bounds browser side effects.
+MAX_STEPS = 8
 # Stage budget must exceed the LLM retry budget (llm_max_attempts slow
 # calls plus capped backoff/Retry-After waits), or resilience is strangled
 # by this timeout and every congested provider looks like a planner bug.
@@ -211,7 +213,9 @@ class Orchestrator:
 
             # --- plan validation: LLM proposes, deterministic policy approves ---
             validator = PlanValidatorAgent()
-            validation = validator.validate(run.plan, run.objective, MAX_STEPS)
+            validation = validator.validate(
+                run.plan, run.objective, MAX_STEPS, allowed_url=run.url
+            )
             revisions = 0
             while not validation.approved and revisions < PLANNER_MAX_REVISIONS:
                 throw_if_cancelled(run, "planning")
@@ -244,7 +248,9 @@ class Orchestrator:
                     continue
                 revisions += 1
                 save_text(run.run_id, "plan.json", run.plan.model_dump_json(indent=2))
-                validation = validator.validate(run.plan, run.objective, MAX_STEPS)
+                validation = validator.validate(
+                    run.plan, run.objective, MAX_STEPS, allowed_url=run.url
+                )
                 self._record(
                     run, session, "plan_validator", "plan_repaired",
                     f"attempt {revisions}: "

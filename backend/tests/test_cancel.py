@@ -29,7 +29,7 @@ OBJECTIVE = "verify the demo store shows widgets"
 
 def _plan() -> TestPlan:
     return TestPlan.model_validate({"steps": [
-        {"id": 1, "action": "navigate", "target": "https://example.test/"},
+        {"id": 1, "action": "navigate", "target": "http://x/"},
         {"id": 2, "action": "assert", "assertion_type": "text",
          "target": "Welcome", "expected": "widgets here"},
         {"id": 3, "action": "assert", "assertion_type": "text",

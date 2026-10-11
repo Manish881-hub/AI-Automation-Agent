@@ -54,3 +54,35 @@ def test_final_assert_on_error_state_still_rejected():
     })
     validation = PlanValidatorAgent().validate(plan, OBJECTIVE, 12)
     assert not validation.approved
+
+
+def test_plan_cannot_navigate_away_from_client_origin():
+    plan = _plan({
+        "action": "assert", "assertion_type": "visible",
+        "target": "Dashboard", "reason": "dashboard is visible",
+    })
+    plan.steps[0].target = "https://credential-collector.example/login"
+
+    validation = PlanValidatorAgent().validate(
+        plan, OBJECTIVE, allowed_url="http://localhost:8921"
+    )
+
+    assert not validation.approved
+    assert any("outside the client origin" in reason for reason in validation.reasons)
+
+
+def test_plan_step_limit_defaults_to_eight():
+    steps = [
+        {"id": 1, "action": "navigate", "target": "http://localhost:8921/"},
+        *[
+            {"id": i, "action": "click", "target": "Continue"}
+            for i in range(2, 9)
+        ],
+        {"id": 9, "action": "assert", "assertion_type": "visible", "target": "Dashboard"},
+    ]
+    validation = PlanValidatorAgent().validate(
+        TestPlan.model_validate({"steps": steps}), OBJECTIVE
+    )
+
+    assert not validation.approved
+    assert any("limit is 8" in reason for reason in validation.reasons)
