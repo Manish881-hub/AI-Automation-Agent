@@ -43,6 +43,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [fixBusy, setFixBusy] = useState(false)
   const [fixError, setFixError] = useState('')
+  const [cancelBusy, setCancelBusy] = useState(false)
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [tokenRequired, setTokenRequired] = useState(false)
   const [opPassword, setOpPassword] = useState('')
@@ -82,6 +83,28 @@ function App() {
   async function operatorLogout() {
     await fetch(apiUrl('/api/auth/logout'), { method: 'POST' })
     await refreshAuth()
+  }
+
+  async function cancelRun() {
+    if (!run) return
+    setCancelBusy(true)
+    setFixError('')
+    try {
+      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/cancel`), { method: 'POST' })
+      if (res.status === 401) {
+        setAuthed(false)
+        setFixError('cancelling needs operator sign-in')
+        return
+      }
+      const data = await res.json()
+      if (!res.ok) {
+        setFixError(data.detail || 'cancel request failed')
+        return
+      }
+      setRun(prev => prev ? { ...prev, status: data.status, fix_status: data.fix_status ?? prev.fix_status } : prev)
+    } finally {
+      setCancelBusy(false)
+    }
   }
 
   async function decideFix(decision: 'approve' | 'reject') {
@@ -137,7 +160,9 @@ function App() {
   return <main>
     <header>
       <div><span className="eyebrow">autonomous qa</span><h1>ai test automation agent</h1><p>plan → execute → validate → debug → report</p></div>
-      <div className="status">{run?.status || 'idle'}</div>
+      <div className="status">{run?.status || 'idle'}{run && (run.status === 'running' || run.status === 'queued') && (
+        <button onClick={cancelRun} disabled={cancelBusy}>{cancelBusy ? 'cancelling…' : 'cancel run'}</button>
+      )}</div>
     </header>
 
     <section className="card">

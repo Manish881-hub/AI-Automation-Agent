@@ -1,5 +1,6 @@
 import asyncio
 import shutil
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -45,6 +46,24 @@ RUN_TIMEOUT_SEC = 600
 RECON_TIMEOUT_SEC = 60
 RECOVERY_TIMEOUT_SEC = 60
 RECOVERY_MAX_ATTEMPTS = 1
+
+
+class RunCancelled(BaseException):
+    """Operator cancellation in flight. BaseException (not Exception) so no
+    generic `except Exception` handler can swallow it into a success, a
+    test failure, or a mislabeled error — it unwinds to the terminal
+    cancelled state and nothing else."""
+
+    def __init__(self, stage: str, reason: str = "operator cancelled the run"):
+        super().__init__(reason)
+        self.stage = stage
+        self.reason = reason
+
+
+def throw_if_cancelled(run: "RunState", stage: str) -> None:
+    """Stage-boundary cooperation point: stop before starting new work."""
+    if run.cancel_requested:
+        raise RunCancelled(stage)
 
 
 @dataclass
@@ -97,6 +116,11 @@ class RunState:
     # branch is kept). Empty until a human approves — proposals never
     # create checkouts.
     fix_worktree: str = ""
+    # Cooperative cancellation: the endpoint sets both; stage boundaries
+    # raise RunCancelled on the flag, blocking calls (pytest) poll the
+    # event. Never serialized — in-memory control plane only.
+    cancel_requested: bool = False
+    cancel_event: threading.Event = field(default_factory=threading.Event)
     # Per-run LLM spend. The shared client is wrapped per run
     # (LLM.scoped) so concurrent runs account separately; llm_calls mirrors
     # the budget counter for API/dashboard observability.
@@ -145,6 +169,7 @@ class Orchestrator:
 
         async def _run_pipeline():
             nonlocal stage
+            throw_if_cancelled(run, "starting")
             # --- reconnaissance: understand the page before planning ---
             stage = "reconnaissance"
             await browser.start()
@@ -169,6 +194,7 @@ class Orchestrator:
 
             # --- planning, grounded in the snapshot when available ---
             stage = "planning"
+            throw_if_cancelled(run, "planning")
             self._record(run, session, "planner", "tool_call", "generate test plan")
             try:
                 run.plan = await asyncio.wait_for(
@@ -187,6 +213,7 @@ class Orchestrator:
             validation = validator.validate(run.plan, run.objective, MAX_STEPS)
             revisions = 0
             while not validation.approved and revisions < PLANNER_MAX_REVISIONS:
+                throw_if_cancelled(run, "planning")
                 self._record(
                     run, session, "plan_validator", "plan_rejected",
                     "; ".join(validation.reasons),
@@ -236,7 +263,9 @@ class Orchestrator:
 
             # --- execute with recovery retries ---
             stage = "execution"
+            throw_if_cancelled(run, "execution")
             for step in run.plan.steps[:MAX_STEPS]:
+                throw_if_cancelled(run, "execution")
                 self._record(
                     run, session, "browser", "step_started", f"step {step.id} ({step.action})",
                 )
@@ -354,6 +383,7 @@ class Orchestrator:
                 run.objective_reason,
             )
 
+            throw_if_cancelled(run, "diagnosis")
             stage = "diagnosis"
             self._record(run, session, "debugger", "tool_call", "analyze results")
             run.analysis = await asyncio.wait_for(
@@ -385,6 +415,10 @@ class Orchestrator:
 
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
+            if run.cancel_requested:
+                # A cancel that landed after the last boundary check must
+                # still win over a normal completion.
+                raise RunCancelled(stage, "operator cancelled the run")
             run.status = "completed"
             self._sync_budget(run)
             self._record(
@@ -392,18 +426,26 @@ class Orchestrator:
                 f"{run.llm_calls}/{run.llm_budget.cap} LLM calls",
             )
             record_terminal(run, "run_completed")
+        except RunCancelled as exc:
+            self._cancel_run(run, session, exc.stage, exc.reason)
         except asyncio.TimeoutError:
-            self._fail_run(
-                run, session, stage,
-                RuntimeError(f"run exceeded {RUN_TIMEOUT_SEC}s budget"),
-            )
-            self._record(
-                run, session, "orchestrator", "timed_out",
-                f"exceeded {RUN_TIMEOUT_SEC}s budget during {stage}",
-            )
+            if run.cancel_requested:
+                self._cancel_run(run, session, stage, "cancelled while the run timed out")
+            else:
+                self._fail_run(
+                    run, session, stage,
+                    RuntimeError(f"run exceeded {RUN_TIMEOUT_SEC}s budget"),
+                )
+                self._record(
+                    run, session, "orchestrator", "timed_out",
+                    f"exceeded {RUN_TIMEOUT_SEC}s budget during {stage}",
+                )
         except Exception as exc:
-            self._fail_run(run, session, stage, exc)
-            self._record(run, session, "orchestrator", "fatal_error", run.error_message)
+            if run.cancel_requested:
+                self._cancel_run(run, session, stage, "cancelled during failure handling")
+            else:
+                self._fail_run(run, session, stage, exc)
+                self._record(run, session, "orchestrator", "fatal_error", run.error_message)
         finally:
             save_text(run.run_id, "events.log", "\n".join(run.events))
             try:
@@ -414,6 +456,64 @@ class Orchestrator:
                 await browser.close()
             except Exception:
                 pass
+
+    def _cancel_run(
+        self, run: RunState, session: Session, stage: str, reason: str
+    ) -> RunState:
+        """Terminal operator cancellation: stopped, not failed, not passed.
+
+        objective_status is left exactly as it was — cancelling an
+        interruption must never mint a business verdict in either
+        direction. Recorded to durable history like any terminal state.
+        """
+        from ..tools.codebase import redact_secrets
+
+        run.status = "cancelled"
+        run.error_stage = stage or "unknown"
+        run.error_kind = "cancelled"
+        run.error_message = redact_secrets(reason)[:300] or "cancelled by operator"
+        self._sync_budget(run)
+        self._record(
+            run, session, "orchestrator", "run_cancelled",
+            f"{run.error_stage}: {run.error_message}",
+        )
+        record_terminal(run, "run_cancelled")
+        return run
+
+    def request_cancel(self, run_id: str) -> dict:
+        """Operator cancel endpoint backing. Returns a result dict; raises
+        KeyError (unknown run) or ValueError (already terminal)."""
+        run = self.runs.get(run_id)
+        if run is None:
+            raise KeyError(f"unknown run {run_id}")
+        if run.status == "cancelled":
+            return {"run_id": run_id, "status": "cancelled",
+                    "detail": "already cancelled"}
+        if run.status in ("completed", "failed"):
+            if run.fix_status == "awaiting_approval":
+                # Pipeline is done but the human gate is still open:
+                # cancel the pending fix itself. No worktree exists yet
+                # (created at approval), so there is nothing to apply or
+                # clean — the patch simply dies unapplied.
+                run.fix_status = "cancelled"
+                session = session_store.get(run.run_id) or session_store.create(run.run_id)
+                self._sync_budget(run)
+                self._record(run, session, "fixer", "fix_cancelled",
+                             "operator cancelled before approval; patch unapplied")
+                record_terminal(run, "fix_cancelled")
+                save_text(run.run_id, "events.log", "\n".join(run.events))
+                return {"run_id": run_id, "status": run.status,
+                        "fix_status": "cancelled",
+                        "detail": "fix cancelled before approval"}
+            raise ValueError(f"run already {run.status}")
+        run.cancel_requested = True
+        run.cancel_event.set()
+        session = session_store.get(run.run_id)
+        if session is not None:
+            self._record(run, session, "orchestrator", "cancel_requested",
+                         "operator asked to stop; finishing the in-flight stage")
+        return {"run_id": run_id, "status": run.status,
+                "detail": "cancellation requested; takes effect at the next stage boundary"}
 
     def _fail_run(
         self, run: RunState, session: Session, stage: str, exc: BaseException
@@ -451,6 +551,7 @@ class Orchestrator:
         fix.patch artifact for review — applying it requires the
         approve endpoint.
         """
+        throw_if_cancelled(run, "fix_proposal")
         codebase_agent = CodebaseAgent()
         fixer = FixerAgent()
         tool = CodebaseTool(settings.workspace_root)
@@ -562,6 +663,7 @@ class Orchestrator:
         run.fix_status = "applying"
         self._record(run, session, "fixer", "fix_approved", "isolating a worktree")
         try:
+            throw_if_cancelled(run, "apply")
             ws_root = Path(settings.workspace_root).resolve()
             repo = repo_toplevel(ws_root)
             if repo is None:
@@ -594,6 +696,7 @@ class Orchestrator:
             )
             tool = CodebaseTool(str(wt_ws))
             runner = TestRunnerTool(str(wt_ws), timeout=settings.test_timeout_sec)
+            throw_if_cancelled(run, "apply")
             status = await asyncio.to_thread(tool.apply_patch, run.fix_diff)
             self._record(run, session, "fixer", "patch_applied", status[:200])
             touched = tool.diff_paths(run.fix_diff)
@@ -602,9 +705,14 @@ class Orchestrator:
                     tool.commit_files, touched,
                     f"fix: agent patch for run {run.run_id[:8]}",
                 )
-            result = await asyncio.to_thread(runner.run_pytest, [])
+            throw_if_cancelled(run, "test")
+            result = await asyncio.to_thread(
+                runner.run_pytest, [], run.cancel_event,
+            )
             run.fix_tests_output = result["output"]
             save_text(run.run_id, "fix_tests.log", result["output"])
+            if result.get("cancelled") or run.cancel_requested:
+                raise RunCancelled("test", "operator cancelled during automated tests")
             if not result["passed"]:
                 run.fix_status = "tests_failed"
                 self._record(
@@ -613,6 +721,7 @@ class Orchestrator:
                 )
                 return self._finish_fix(run)
             self._record(run, session, "test_runner", "tests_passed", "pytest green")
+            throw_if_cancelled(run, "verify")
             verified, reason = await self._verify_fix(run, session)
             run.fix_verify_summary = reason
             if verified:
@@ -632,6 +741,14 @@ class Orchestrator:
             # pytest green but the customer workflow still fails: keep the
             # two verdicts distinct instead of collapsing them.
             run.fix_status = "tests_passed_browser_failed"
+            return self._finish_fix(run)
+        except RunCancelled as exc:
+            run.fix_status = "cancelled"
+            self._sync_budget(run)
+            self._record(
+                run, session, "fixer", "fix_cancelled",
+                f"{exc.stage}: {exc.reason}",
+            )
             return self._finish_fix(run)
         except Exception as exc:
             run.fix_status = "apply_failed"
@@ -751,6 +868,7 @@ class Orchestrator:
             self._record(run, session, "verifier", "tool_call", mode)
             await browser.start()
             for step in steps:
+                throw_if_cancelled(run, "verify")
                 shot = str(run_dir(run.run_id) / f"verify_step_{step.id}.png")
                 try:
                     result = await asyncio.wait_for(

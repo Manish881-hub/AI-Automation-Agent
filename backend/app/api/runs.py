@@ -107,6 +107,24 @@ async def reject_fix(run_id: str, request: Request):
     return {"run_id": run.run_id, "fix_status": run.fix_status}
 
 
+@router.post("/{run_id}/cancel")
+async def cancel_run(run_id: str, request: Request):
+    """Operator stop: cooperative cancellation of a live run or fix.
+
+    Same authorization as approval — stopping work is as sensitive as
+    approving it. Unknown runs 404; already-terminal runs 409 (except an
+    already-cancelled run, which repeats its state idempotently); live
+    runs accept the request and reach `cancelled` at the next boundary.
+    """
+    require_approval(request)
+    try:
+        return orchestrator.request_cancel(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @router.get("/{run_id}/events")
 async def get_events(run_id: str):
     run = orchestrator.runs.get(run_id)

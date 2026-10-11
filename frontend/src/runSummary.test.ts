@@ -90,6 +90,39 @@ describe("getChecklist", () => {
     expect(states.get("report")?.state).toBe("skipped");
   });
 
+  it("reports a cancelled run instead of waiting", () => {
+    const panel = getResultsPanel({
+      status: "cancelled",
+      results: [],
+      error_stage: "execution",
+      error_message: "operator cancelled the run",
+    });
+    expect(panel.kind).toBe("empty");
+    if (panel.kind !== "empty") throw new Error("unreachable");
+    expect(panel.headline).toBe("Run cancelled");
+    expect(panel.detail).toContain("execution");
+  });
+
+  it("settles every indicator on a cancelled run, fix included", () => {
+    const run: RunView = {
+      status: "cancelled",
+      plan: { steps: [{ id: 1, action: "navigate", target: "x" }] },
+      results: [],
+      analysis: null,
+      report: null,
+      error_stage: "execution",
+      error_message: "operator cancelled the run",
+      fix_status: "cancelled",
+    };
+    const states = new Map(getChecklist(run, []).map((i) => [i.id, i]));
+    for (const item of states.values()) {
+      expect(item.state).not.toBe("pending");
+    }
+    expect(states.get("fix")).toEqual(
+      expect.objectContaining({ state: "skipped" }),
+    );
+  });
+
   it("keeps the fix approval gate actionable when awaiting approval", () => {
     const run: RunView = {
       status: "completed",

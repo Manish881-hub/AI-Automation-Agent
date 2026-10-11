@@ -85,7 +85,12 @@ export type ResultsPanel =
  * results it says execution never started (or produced nothing) and why. */
 export function getResultsPanel(run: RunView): ResultsPanel {
   if ((run.results ?? []).length > 0) return { kind: "results" };
-  if (run.status !== "failed" && run.status !== "completed") return { kind: "waiting" };
+  if (run.status !== "failed" && run.status !== "completed" && run.status !== "cancelled") return { kind: "waiting" };
+  if (run.status === "cancelled") {
+    const why = run.error_message || "the run was stopped by the operator";
+    const stage = run.error_stage ? ` (during ${run.error_stage})` : "";
+    return { kind: "empty", headline: "Run cancelled", detail: `${why}${stage}` };
+  }
   const why =
     run.error_message ||
     run.objective_reason ||
@@ -100,7 +105,7 @@ export function getResultsPanel(run: RunView): ResultsPanel {
 export function getChecklist(run: RunView, events: string[]): CheckItem[] {
   const items: CheckItem[] = [];
   const website = run.website ?? null;
-  const terminal = run.status === "failed" || run.status === "completed";
+  const terminal = run.status === "failed" || run.status === "completed" || run.status === "cancelled";
   // Pipeline stages that never ran must not keep a waiting indicator once
   // the run is terminal. The fix-approval item is excluded: awaiting_approval
   // is an actionable human gate, not a waiting spinner.
@@ -192,7 +197,9 @@ export function getChecklist(run: RunView, events: string[]): CheckItem[] {
           ? { id: "fix", label: "fix", state: "pending" as CheckState, detail: "awaiting approval" }
           : fix === "rejected"
             ? { id: "fix", label: "fix", state: "pending" as CheckState, detail: "declined — not applied" }
-            : { id: "fix", label: "fix", state: "fail" as CheckState, detail: fix },
+            : fix === "cancelled"
+              ? { id: "fix", label: "fix", state: "skipped" as CheckState, detail: "cancelled — never applied" }
+              : { id: "fix", label: "fix", state: "fail" as CheckState, detail: fix },
     );
   }
 
