@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
 import { apiUrl } from './api'
+import { readAuthStatus, sameOriginRequest } from './authSession'
 import { getChecklist, getResultsPanel, inputLabel, linkText } from './runSummary'
 
 type Website = {
@@ -51,14 +52,13 @@ function App() {
   const [opBusy, setOpBusy] = useState(false)
 
   async function refreshAuth() {
-    try {
-      const r = await fetch(apiUrl('/api/auth/status'))
-      const d = await r.json()
-      setAuthed(!!d.authenticated)
-      setTokenRequired(!!d.token_required)
-    } catch {
+    const status = await readAuthStatus()
+    if (status === null) {
       setAuthed(null)
+      return
     }
+    setAuthed(status.authenticated)
+    setTokenRequired(status.tokenRequired)
   }
 
   async function operatorLogin(e: React.FormEvent) {
@@ -66,10 +66,10 @@ function App() {
     setOpBusy(true)
     setFixError('')
     try {
-      const res = await fetch(apiUrl('/api/auth/login'), {
+      const res = await fetch(apiUrl('/api/auth/login'), sameOriginRequest({
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ token: opPassword })
-      })
+      }))
       if (res.ok) {
         setOpPassword('')
         setNeedAuth(false)
@@ -84,7 +84,7 @@ function App() {
   }
 
   async function operatorLogout() {
-    await fetch(apiUrl('/api/auth/logout'), { method: 'POST' })
+    await fetch(apiUrl('/api/auth/logout'), sameOriginRequest({ method: 'POST' }))
     await refreshAuth()
   }
 
@@ -93,7 +93,7 @@ function App() {
     setCancelBusy(true)
     setFixError('')
     try {
-      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/cancel`), { method: 'POST' })
+      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/cancel`), sameOriginRequest({ method: 'POST' }))
       if (res.status === 401) {
         setAuthed(false)
         setFixError('cancelling needs operator sign-in')
@@ -115,7 +115,7 @@ function App() {
     setFixBusy(true)
     setFixError('')
     try {
-      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/fix/${decision}`), { method: 'POST' })
+      const res = await fetch(apiUrl(`/api/runs/${run.run_id}/fix/${decision}`), sameOriginRequest({ method: 'POST' }))
       if (res.status === 401) {
         setAuthed(false)
         setFixError('approval needs operator sign-in')
@@ -135,10 +135,10 @@ function App() {
     setEvents([])
     setFixError('')
     try {
-      const res = await fetch(apiUrl('/api/runs'), {
+      const res = await fetch(apiUrl('/api/runs'), sameOriginRequest({
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({url, objective})
-      })
+      }))
       if (res.status === 401) {
         setAuthed(false)
         setNeedAuth(true)
@@ -161,8 +161,8 @@ function App() {
     refreshAuth()
     const timer = setInterval(async () => {
       const [r, e] = await Promise.all([
-        fetch(apiUrl(`/api/runs/${run.run_id}`)),
-        fetch(apiUrl(`/api/runs/${run.run_id}/events`))
+        fetch(apiUrl(`/api/runs/${run.run_id}`), sameOriginRequest()),
+        fetch(apiUrl(`/api/runs/${run.run_id}/events`), sameOriginRequest())
       ])
       if (r.status === 401 || e.status === 401) {
         setAuthed(false)
@@ -192,6 +192,17 @@ function App() {
         <button disabled={loading}>{loading ? 'starting…' : 'run autonomous test'}</button>
       </form>
     </section>
+
+    {tokenRequired && !authed && (
+      <section className="card" aria-label="operator sign-in">
+        <h2>operator sign-in</h2>
+        <p className="muted">sign in once to run tests and approve fixes — the token stays server-side, never in this page</p>
+        <form onSubmit={operatorLogin}>
+          <label>operator token<input type="password" value={opPassword} onChange={e => setOpPassword(e.target.value)} autoComplete="current-password" /></label>
+          <button disabled={opBusy || !opPassword}>{opBusy ? 'signing in…' : 'sign in'}</button>
+        </form>
+      </section>
+    )}
 
     {run && <>
       {run.objective_status && run.objective_status !== 'unknown' && (
@@ -238,16 +249,6 @@ function App() {
         })()}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
-      {tokenRequired && !authed && (needAuth || (run.fix_status && run.fix_status !== 'none' && run.fix_status === 'awaiting_approval')) && (
-        <section className="card" aria-label="operator sign-in">
-          <h2>operator sign-in</h2>
-          <p className="muted">approving a fix requires operator sign-in — the token stays server-side, never in this page</p>
-          <form onSubmit={operatorLogin}>
-            <label>operator token<input type="password" value={opPassword} onChange={e => setOpPassword(e.target.value)} autoComplete="current-password" /></label>
-            <button disabled={opBusy || !opPassword}>{opBusy ? 'signing in…' : 'sign in'}</button>
-          </form>
-        </section>
-      )}
       {run.fix_status && run.fix_status !== 'none' && (
         <section className="card fix" aria-label="proposed fix">
           <h2>ai proposed fix</h2>
