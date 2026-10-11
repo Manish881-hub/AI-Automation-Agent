@@ -1,10 +1,31 @@
 import asyncio
-from fastapi import APIRouter, HTTPException, Query
+import hmac
+from fastapi import APIRouter, HTTPException, Query, Request
+from ..config import settings
 from ..schemas import TestRunRequest, TestRunResponse, normalize_url
 from ..services.history import read_history
 from ..services.orchestrator import orchestrator
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+def require_approval(request: Request) -> None:
+    """Authorize a human approval decision. Fails closed: without a
+    configured APPROVAL_TOKEN every decision is refused, so an
+    unconfigured server can never apply code.
+
+    Two equivalent credentials: the X-Approval-Token header (scripts, API
+    clients) or an operator session cookie from POST /api/auth/login (the
+    browser UI, which never sees the token itself). Compared in constant
+    time; failures say nothing about the expected value.
+    """
+    from .auth import credentials_ok, session_authorized
+
+    if credentials_ok(request.headers.get("x-approval-token", "")):
+        return
+    if session_authorized(request):
+        return
+    raise HTTPException(status_code=401, detail="approval not authorized")
 
 
 @router.get("", response_model=None)
@@ -56,8 +77,9 @@ async def get_run(run_id: str):
 
 
 @router.post("/{run_id}/fix/approve")
-async def approve_fix(run_id: str):
+async def approve_fix(run_id: str, request: Request):
     """Human approval gate: apply the proposed patch on a branch and test it."""
+    require_approval(request)
     try:
         run = await orchestrator.apply_fix(run_id)
     except KeyError:
@@ -73,8 +95,9 @@ async def approve_fix(run_id: str):
 
 
 @router.post("/{run_id}/fix/reject")
-async def reject_fix(run_id: str):
+async def reject_fix(run_id: str, request: Request):
     """Human declines the proposed patch; it is never applied."""
+    require_approval(request)
     try:
         run = orchestrator.reject_fix(run_id)
     except KeyError:

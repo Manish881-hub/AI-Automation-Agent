@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     workspace_root: str = "."
     fix_enabled: bool = True
     test_timeout_sec: int = 180
+    # Human-approval authorization: approve/reject require this value via
+    # the X-Approval-Token header or an operator session cookie from
+    # POST /api/auth/login. EMPTY FAILS CLOSED — decisions are refused
+    # until a token is configured — because the gate decides whose code
+    # gets applied, and an unconfigured server must never apply code.
+    approval_token: str = ""
     # OpenRouter fallback routing: comma-separated extra model ids tried by
     # OpenRouter itself when the primary is rate-limited or unavailable.
     # Sent via the OpenAI SDK's extra_body {"models": [...]} mechanism, so

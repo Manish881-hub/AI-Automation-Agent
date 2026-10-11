@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
+from .api.auth import router as auth_router
 from .api.runs import router as runs_router
 
 app = FastAPI(title="AI Test Automation Agent", version="0.1.0")
@@ -13,6 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(runs_router)
 
 

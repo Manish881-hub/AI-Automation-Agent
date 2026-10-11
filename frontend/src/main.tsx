@@ -42,12 +42,59 @@ function App() {
   const [events, setEvents] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [fixBusy, setFixBusy] = useState(false)
+  const [fixError, setFixError] = useState('')
+  const [authed, setAuthed] = useState<boolean | null>(null)
+  const [tokenRequired, setTokenRequired] = useState(false)
+  const [opPassword, setOpPassword] = useState('')
+  const [opBusy, setOpBusy] = useState(false)
+
+  async function refreshAuth() {
+    try {
+      const r = await fetch(apiUrl('/api/auth/status'))
+      const d = await r.json()
+      setAuthed(!!d.authenticated)
+      setTokenRequired(!!d.token_required)
+    } catch {
+      setAuthed(null)
+    }
+  }
+
+  async function operatorLogin(e: React.FormEvent) {
+    e.preventDefault()
+    setOpBusy(true)
+    setFixError('')
+    try {
+      const res = await fetch(apiUrl('/api/auth/login'), {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ token: opPassword })
+      })
+      if (res.ok) {
+        setOpPassword('')
+        await refreshAuth()
+      } else {
+        setFixError('operator sign-in failed')
+      }
+    } finally {
+      setOpBusy(false)
+    }
+  }
+
+  async function operatorLogout() {
+    await fetch(apiUrl('/api/auth/logout'), { method: 'POST' })
+    await refreshAuth()
+  }
 
   async function decideFix(decision: 'approve' | 'reject') {
     if (!run) return
     setFixBusy(true)
+    setFixError('')
     try {
       const res = await fetch(apiUrl(`/api/runs/${run.run_id}/fix/${decision}`), { method: 'POST' })
+      if (res.status === 401) {
+        setAuthed(false)
+        setFixError('approval needs operator sign-in')
+        return
+      }
       const data = await res.json()
       setRun(prev => prev ? { ...prev, fix_status: data.fix_status, fix_branch: data.fix_branch ?? prev.fix_branch } : prev)
     } finally {
@@ -70,7 +117,12 @@ function App() {
   }
 
   useEffect(() => {
+    refreshAuth()
+  }, [])
+
+  useEffect(() => {
     if (!run?.run_id) return
+    refreshAuth()
     const timer = setInterval(async () => {
       const [r, e] = await Promise.all([
         fetch(apiUrl(`/api/runs/${run.run_id}`)),
@@ -136,10 +188,20 @@ function App() {
         })()}</div>
       </section>
       {run.analysis && <section className="card"><h2>debugger analysis</h2><p>{run.analysis.summary}</p><p><b>probable root cause:</b> {run.analysis.probable_root_cause}</p><h3>evidence</h3><ul>{run.analysis.evidence?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul><h3>recommended actions</h3><ul>{run.analysis.recommended_actions?.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></section>}
+      {run.fix_status && run.fix_status !== 'none' && run.fix_status === 'awaiting_approval' && tokenRequired && !authed && (
+        <section className="card" aria-label="operator sign-in">
+          <h2>operator sign-in</h2>
+          <p className="muted">approving a fix requires operator sign-in — the token stays server-side, never in this page</p>
+          <form onSubmit={operatorLogin}>
+            <label>operator token<input type="password" value={opPassword} onChange={e => setOpPassword(e.target.value)} autoComplete="current-password" /></label>
+            <button disabled={opBusy || !opPassword}>{opBusy ? 'signing in…' : 'sign in'}</button>
+          </form>
+        </section>
+      )}
       {run.fix_status && run.fix_status !== 'none' && (
         <section className="card fix" aria-label="proposed fix">
           <h2>ai proposed fix</h2>
-          <p className="muted">status: {run.fix_status}{run.fix_branch ? ` · branch ${run.fix_branch}` : ''}</p>
+          <p className="muted">status: {run.fix_status}{run.fix_branch ? ` · branch ${run.fix_branch}` : ''}{authed && tokenRequired ? <> · operator signed in (<button onClick={operatorLogout}>sign out</button>)</> : ''}</p>
           {run.fix_explanation && <p><b>why</b> — {run.fix_explanation}</p>}
           {run.fix_diff && <pre className="diff">{run.fix_diff}</pre>}
           <p className="muted">verification: pytest, then browser re-test of the original objective</p>
@@ -149,6 +211,7 @@ function App() {
               <button onClick={() => decideFix('approve')} disabled={fixBusy}>{fixBusy ? 'working…' : 'approve fix'}</button>
             </div>
           )}
+          {fixError && <p role="alert">{fixError}</p>}
           {run.fix_verify_summary && <p>{run.fix_verify_summary}</p>}
         </section>
       )}

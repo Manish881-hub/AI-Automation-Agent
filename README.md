@@ -74,8 +74,13 @@ Troubleshooting:
 ```bash
 cd frontend
 npm install
-VITE_API_URL=http://localhost:8001 npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
+
+Keep the default same-origin mode: the browser calls `/api/...` on `:5173`
+and Vite proxies to the backend, so the operator session cookie works.
+(Setting `VITE_API_URL` switches to cross-origin calls, which silently
+drop the session cookie — do not use it for the approval demo.)
 
 Open `http://localhost:5173`.
 
@@ -147,6 +152,14 @@ Evidence for the reference run lives under
   retargeted at it, so verification exercises the patched code.
 - Stale bases, dirty trees, and foreign paths fail closed before anything
   is applied; fix branches are kept for inspection after worktree cleanup.
+- Approval authorization: generate a token once —
+  `python3 -c "import secrets; print(secrets.token_hex(32))"` — and set
+  `APPROVAL_TOKEN` in `backend/.env` (never commit it). Approval decisions
+  fail closed without one. API clients send it as `X-Approval-Token`; the
+  browser UI trades it once via the operator sign-in card for an HttpOnly
+  session cookie, so the token never enters the frontend bundle. Scripted
+  runs (e.g. the golden test) must sign in through the UI before the
+  approval click.
 
 ## Engineering notes
 
