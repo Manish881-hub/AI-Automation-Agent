@@ -107,6 +107,10 @@ class RunState:
     fix_verify_summary: str = ""
     analysis: FailureAnalysis | None = None
     report: str | None = None
+    # Read-only source triage gathered in parallel with reporting after the
+    # debugger has produced immutable failure evidence. It is deliberately
+    # in-memory only; CodebaseTool already redacts and scopes source reads.
+    codebase_context: dict | None = None
     events: list[str] = field(default_factory=list)
     # Terminal infrastructure failure (distinct from a failed test or a
     # failed business objective): which stage died and why, in dashboard-
@@ -416,14 +420,7 @@ class Orchestrator:
                 "failure" if run.analysis.failed else "no remaining failure",
             )
             stage = "reporting"
-            self._record(run, session, "reporter", "tool_call", "generate report")
-            run.report = reporter.run(
-                run.results, run.analysis,
-                objective=run.objective, objective_status=run.objective_status,
-                objective_reason=run.objective_reason,
-            )
-            save_text(run.run_id, "report.md", run.report)
-            self._record(run, session, "reporter", "report_generated")
+            await self._fan_out_diagnosis(run, session, reporter)
 
             # --- white-box fix loop: propose a patch, wait for a human ---
             stage = "fix_proposal"
@@ -432,7 +429,7 @@ class Orchestrator:
                 and run.analysis is not None
                 and run.analysis.failed
             ):
-                await self._propose_fix(run, session)
+                await self._propose_fix(run, session, context=run.codebase_context)
 
         try:
             await asyncio.wait_for(_run_pipeline(), timeout=RUN_TIMEOUT_SEC)
@@ -565,7 +562,76 @@ class Orchestrator:
     def _sync_budget(run: RunState) -> None:
         run.llm_calls = run.llm_budget.calls
 
-    async def _propose_fix(self, run: RunState, session: Session) -> None:
+    async def _fan_out_diagnosis(
+        self, run: RunState, session: Session, reporter: ReporterAgent
+    ) -> None:
+        """Join independent post-debug agents without sharing mutable tools.
+
+        Browser interactions, LLM calls, approvals, and code changes remain
+        ordered. Once debugging freezes the evidence, reporting and the
+        read-only codebase scout can safely run together; the coordinator is
+        still the sole writer of RunState and the audit trail.
+        """
+        assert run.analysis is not None
+        scout_enabled = settings.fix_enabled and run.analysis.failed
+        agents = "reporter,codebase" if scout_enabled else "reporter"
+        self._record(run, session, "orchestrator", "diagnosis_fanout_started", agents)
+        self._record(run, session, "reporter", "tool_call", "generate report")
+
+        report_task = asyncio.create_task(asyncio.to_thread(
+            reporter.run,
+            run.results,
+            run.analysis,
+            objective=run.objective,
+            objective_status=run.objective_status,
+            objective_reason=run.objective_reason,
+        ))
+        scout_task = None
+        if scout_enabled:
+            self._record(run, session, "codebase", "tool_call", "locate failure code")
+            scout_task = asyncio.create_task(self._investigate_codebase(run))
+
+        if scout_task is None:
+            report = await report_task
+            scout_result = None
+        else:
+            report, scout_result = await asyncio.gather(
+                report_task, scout_task, return_exceptions=True
+            )
+        if isinstance(report, BaseException):
+            raise report
+        run.report = report
+        save_text(run.run_id, "report.md", run.report)
+        self._record(run, session, "reporter", "report_generated")
+
+        if isinstance(scout_result, dict):
+            run.codebase_context = scout_result
+            files = list(scout_result.get("files", {}))
+            self._record(
+                run, session, "codebase", "code_located",
+                ", ".join(files) if files else "no files located",
+            )
+        elif scout_result is not None:
+            detail = str(scout_result)[:300]
+            self._record(run, session, "codebase", "investigate_failed", detail)
+        self._record(run, session, "orchestrator", "diagnosis_fanout_completed", agents)
+
+    async def _investigate_codebase(self, run: RunState) -> dict:
+        """Bounded, read-only source search for the diagnosis fan-out."""
+        assert run.analysis is not None
+        agent = CodebaseAgent()
+        tool = CodebaseTool(settings.workspace_root)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(agent.investigate, tool, run.results, run.analysis),
+                timeout=RECOVERY_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("source search timed out") from exc
+
+    async def _propose_fix(
+        self, run: RunState, session: Session, context: dict | None = None
+    ) -> None:
         """Diagnose code, propose a diff, and park for human approval.
 
         Read-only against the workspace. The only write here is the
@@ -573,25 +639,24 @@ class Orchestrator:
         approve endpoint.
         """
         throw_if_cancelled(run, "fix_proposal")
-        codebase_agent = CodebaseAgent()
         fixer = FixerAgent()
         tool = CodebaseTool(settings.workspace_root)
-        self._record(run, session, "codebase", "tool_call", "locate failure code")
-        try:
-            context = await asyncio.wait_for(
-                asyncio.to_thread(
-                    codebase_agent.investigate, tool, run.results, run.analysis
-                ),
-                timeout=RECOVERY_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError:
-            self._record(run, session, "codebase", "investigate_failed", "search timed out")
-            return
+        cached_context = context is not None
+        if context is None:
+            self._record(run, session, "codebase", "tool_call", "locate failure code")
+            try:
+                context = await self._investigate_codebase(run)
+            except Exception as exc:
+                self._record(run, session, "codebase", "investigate_failed", str(exc)[:300])
+                return
+        else:
+            self._record(run, session, "codebase", "context_reused", "diagnosis fan-out")
         files = list(context.get("files", {}))
-        self._record(
-            run, session, "codebase", "code_located",
-            ", ".join(files) if files else "no files located",
-        )
+        if not cached_context:
+            self._record(
+                run, session, "codebase", "code_located",
+                ", ".join(files) if files else "no files located",
+            )
         if not files:
             return
         failure_summary = (
