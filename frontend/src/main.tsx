@@ -200,6 +200,12 @@ function App() {
           {run.objective_reason && <p>{run.objective_reason}</p>}
         </section>
       )}
+      {run.fix_status === 'verified' && (
+        <section className="card objective passed" role="status">
+          <h2>fix verified · browser re-test passed</h2>
+          <p>{run.fix_verify_summary || 'Pytest and the original browser objective both passed after the approved fix.'}</p>
+        </section>
+      )}
       <section className="grid">
         <div className="card">
           <h2>website understanding</h2>
