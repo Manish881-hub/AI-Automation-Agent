@@ -1,0 +1,70 @@
+{
+ "id": "demo-golden-clean",
+ "run_prefix": "05ffb368",
+ "objective": "verify that a user can sign in and reach the dashboard",
+ "allowed_url": "http://localhost:8901",
+ "snapshot": {
+  "url": "http://localhost:8901/",
+  "title": "Acme Portal \u2014 Sign in",
+  "headings": [
+   "Welcome back"
+  ],
+  "links": [],
+  "buttons": [
+   "Sign in",
+   "Forgot password?",
+   "Create account"
+  ],
+  "inputs": [
+   {
+    "label": "Email",
+    "name": "email",
+    "type": "email",
+    "placeholder": "you@company.com"
+   },
+   {
+    "label": "Password",
+    "name": "password",
+    "type": "password",
+    "placeholder": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+   }
+  ],
+  "forms": [
+   {
+    "action": "",
+    "fields": [
+     "email",
+     "password"
+    ]
+   }
+  ],
+  "visible_text": "Welcome back\n\nSign in to reach your dashboard.\n\nEmail\nPassword\nSign in\nForgot password?\nCreate account",
+  "screenshot": "artifacts/05ffb368-5f02-46b1-ba39-9e75949a9399/recon.png"
+ },
+ "plan": {
+  "steps": [
+   {
+    "id": 1,
+    "action": "navigate",
+    "target": "http://localhost:8901",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 2,
+    "action": "assert",
+    "target": "",
+    "value": "",
+    "expected": "/dashboard",
+    "assertion_type": "url",
+    "reason": ""
+   }
+  ]
+ },
+ "expect": {
+  "approved": true,
+  "min_groundedness": 0.9
+ }
+}

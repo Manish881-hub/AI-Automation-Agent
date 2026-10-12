@@ -1,0 +1,106 @@
+{
+ "id": "demo-rejected-weak-assert",
+ "run_prefix": "5425894b",
+ "objective": "verify that a user can sign in and reach the dashboard",
+ "allowed_url": "http://localhost:8921/",
+ "snapshot": {
+  "url": "http://localhost:8921/",
+  "title": "Acme Portal \u2014 Sign in",
+  "headings": [
+   "Welcome back"
+  ],
+  "links": [],
+  "buttons": [
+   "Sign in",
+   "Forgot password?",
+   "Create account"
+  ],
+  "inputs": [
+   {
+    "label": "Email",
+    "name": "email",
+    "type": "email",
+    "placeholder": "you@company.com"
+   },
+   {
+    "label": "Password",
+    "name": "password",
+    "type": "password",
+    "placeholder": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+   }
+  ],
+  "forms": [
+   {
+    "action": "",
+    "fields": [
+     "email",
+     "password"
+    ]
+   }
+  ],
+  "visible_text": "Welcome back\n\nSign in to reach your dashboard.\n\nEmail\nPassword\nSign in\nForgot password?\nCreate account",
+  "screenshot": "artifacts/5425894b-95f2-4ea4-9a3c-7820105c21d7/recon.png"
+ },
+ "plan": {
+  "steps": [
+   {
+    "id": 1,
+    "action": "navigate",
+    "target": "URL Bar",
+    "value": "http://localhost:8921/",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Start at the sign-in entry point"
+   },
+   {
+    "id": 2,
+    "action": "assert",
+    "target": "Title",
+    "value": "Acme Portal \u2014 Sign in",
+    "expected": "",
+    "assertion_type": "title",
+    "reason": "Confirm the sign-in page loaded successfully"
+   },
+   {
+    "id": 3,
+    "action": "fill",
+    "target": "Email",
+    "value": "{{TEST_EMAIL}}",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Enter test credentials"
+   },
+   {
+    "id": 4,
+    "action": "fill",
+    "target": "Password",
+    "value": "{{TEST_PASSWORD}}",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Enter test password"
+   },
+   {
+    "id": 5,
+    "action": "click",
+    "target": "Sign in",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Submit login credentials"
+   },
+   {
+    "id": 6,
+    "action": "assert",
+    "target": "URL Bar",
+    "value": "http://localhost:8921/dashboard",
+    "expected": "",
+    "assertion_type": "url",
+    "reason": "Verify user reached the dashboard (objective success)"
+   }
+  ]
+ },
+ "expect": {
+  "approved": false,
+  "min_groundedness": 0.0
+ }
+}

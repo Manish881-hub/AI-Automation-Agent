@@ -1,0 +1,269 @@
+{
+ "id": "vague-objective-rejected",
+ "run_prefix": "658d7f4e",
+ "objective": "find any bugs in this app",
+ "allowed_url": "https://wellfound.com/jobs",
+ "snapshot": {
+  "url": "https://wellfound.com/jobs",
+  "title": "Find Startup Jobs Near You and Remote Jobs | Wellfound",
+  "headings": [
+   "OVER 130K REMOTE & LOCAL STARTUP JOBS",
+   "Find what's next:",
+   "Trending startups hiring now",
+   "AlwayzON",
+   "Super",
+   "Quizcademy",
+   "Rampwork",
+   "Trending startup jobs",
+   "Engineering jobs",
+   "Product jobs",
+   "Design jobs",
+   "Data and Analytics jobs",
+   "Sales jobs",
+   "Marketing jobs",
+   "Operations jobs"
+  ],
+  "links": [
+   {
+    "text": "Why Wellfound",
+    "href": "/candidates/overview"
+   },
+   {
+    "text": "Jobs",
+    "href": "/jobs"
+   },
+   {
+    "text": "Remote",
+    "href": "/candidates/remote"
+   },
+   {
+    "text": "Get discovered",
+    "href": "/candidates/featured"
+   },
+   {
+    "text": "Salaries",
+    "href": "/hiring-data"
+   },
+   {
+    "text": "For companies",
+    "href": "/recruit/overview"
+   },
+   {
+    "text": "Log in",
+    "href": "/login"
+   },
+   {
+    "text": "Create profile",
+    "href": "/jobs/signup?after_sign_in=%2Fjobs&source=jobs+landing&source_content=nav"
+   },
+   {
+    "text": "AlwayzON",
+    "href": "/company/alwayzon"
+   },
+   {
+    "text": "5 open positions",
+    "href": "/company/alwayzon/jobs"
+   },
+   {
+    "text": "Super",
+    "href": "/company/hiresuper"
+   },
+   {
+    "text": "3 open positions",
+    "href": "/company/hiresuper/jobs"
+   },
+   {
+    "text": "Quizcademy",
+    "href": "/company/quizcademy"
+   },
+   {
+    "text": "3 open positions",
+    "href": "/company/quizcademy/jobs"
+   },
+   {
+    "text": "Rampwork",
+    "href": "/company/rampwork"
+   },
+   {
+    "text": "4 open positions",
+    "href": "/company/rampwork/jobs"
+   },
+   {
+    "text": "View all jobs",
+    "href": "/location/united-states"
+   },
+   {
+    "text": "GTM Lead",
+    "href": "/jobs/4824463-gtm-lead"
+   },
+   {
+    "text": "AI Engineering Lead",
+    "href": "/jobs/4824421-ai-engineering-lead"
+   },
+   {
+    "text": "View all engineering jobs",
+    "href": "/role/l/software-engineer/united-states"
+   },
+   {
+    "text": "Founding Software Engineer",
+    "href": "/jobs/4824448-founding-software-engineer"
+   },
+   {
+    "text": "LLM & AI Agent Engineer cum Manager",
+    "href": "/jobs/4824435-llm-ai-agent-engineer-cum-manager"
+   },
+   {
+    "text": "Senior Front-End Engineer",
+    "href": "/jobs/4359678-senior-front-end-engineer"
+   },
+   {
+    "text": "Applied Machine Learning Engineer",
+    "href": "/jobs/3904972-applied-machine-learning-engineer"
+   },
+   {
+    "text": "Senior Software Engineer - Infrastructure Security (Remote)",
+    "href": "/jobs/4391602-senior-software-engineer-infrastructure-security-remote"
+   }
+  ],
+  "buttons": [
+   "Search",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply",
+   "Save",
+   "Apply"
+  ],
+  "inputs": [
+   {
+    "label": "",
+    "name": "",
+    "type": "text",
+    "placeholder": ""
+   },
+   {
+    "label": "",
+    "name": "",
+    "type": "text",
+    "placeholder": ""
+   },
+   {
+    "label": "",
+    "name": "email",
+    "type": "text",
+    "placeholder": "Your Email"
+   }
+  ],
+  "forms": [
+   {
+    "action": "/jobs/signup?source=jobs+landing",
+    "fields": [
+     "source",
+     "sourceContent",
+     "email",
+     "submit"
+    ]
+   }
+  ],
+  "visible_text": "Why Wellfound\nJobs\nRemote\nGet discovered\nSalaries\nFor companies\nLog in\nCreate profile\nOVER 130K REMOTE & LOCAL STARTUP JOBS\nFind what's next:\nJob title\nLocation\nSearch\nTrending startups hiring now\nAlwayzON\n11-50 employees\nVenture Access Infrastructure\n5 open positions\nSuper\n1-10 employees\nSuper is the AI assistant for property management\nGrowing fast\n3 open positions\nQuizcademy\n1-10 employees\nA platform for students\nGrowing fast\n3 open positions\nRampwork\n51-200 employees\n4 open positions\nTrending startup jobs\nView all jobs\nGTM Lead\nCapitalOS \u2022 Onsite or remote \u2022 San Mateo \u2022 +2 more \u2022 $100k \u2013 $150k \u2022 0.05% \u2013 0.15% \u2022 today\nSave\nApply\nAI Engineering Lead\nAI Sales \u2022 Onsite or remote \u2022 San Francisco \u2022 +1 more \u2022 $60k \u2013 $120k \u2022 No equity \u2022 yesterday\nSave\nApply\nEngineering jobs\nView all engineering jobs\nFounding Software Engineer\nKodo \u2022 In office \u2022 New York City \u2022 $170k \u2013 $200k \u2022 yesterday\nSave\nApply\nLLM & AI Agent Engineer cum Manager\nAI Sales \u2022 Onsite or remote \u2022 San Francisco \u2022 +1 more \u2022 $60k \u2013 $120k \u2022 3.0% \u2013 10.0% \u2022 yesterday\nSave\nApply\nSenior Front-End Engineer\nTradeify.co \u2022 Florida \u2022 $120k \u2013 $155k \u2022 1 day ago\nSave\nApply\nApplied Machine Learning Engineer\nPermitFlow \u2022 Remote \u2022 New York City \u2022 $175k \u2013 $250k \u2022 1 day ago\nSave\nApply\nSenior Software Engineer - Infrastructure Security (Remote)\nQuora \u2022 Remote \u2022 United States \u2022 $172k \u2013 $250k \u2022 1 day ago\nSave\nApply\nProduct jobs\nView all product jobs\nProduct Manager\nWorkWhile \u2022 In office \u2022 San Francisco \u2022 $145k \u2013 $180k \u2022 1 day ago\nSave\nApply\nStaff Product Manager, AI Applications\nDeepgram \u2022 Remote only \u2022 United States \u2022 $200k \u2013 $268k \u2022 1 day ago\nSave\nApply\nProduct Manager\nPartytrick \u2022 Remote only \u2022 United States \u2022 $100k \u2013 $140k \u2022 1 day ago\nSave\nApply\nProduct Manager\nUnlearn.AI \u2022 San Francisco \u2022 $156k \u2013 $235k \u2022 2 days ago\nSave\nApply\nGroup Product Manager\nMirage \u2022 New York \u2022 $200k \u2013 $325k \u2022 2 days ago\nSave\nApply\nDesign jobs\nView all design jobs\nCinematographer\nNen Creative \u2022 San Francisco \u2022 $70k \u2013 $120k \u2022 1 week ago\nSave\nApply\nSenior Interior Designer\nTalent Scroll \u2022 In office \u2022 New York City \u2022 $90k \u2013 $120k \u2022 No equity \u2022 4 weeks ago\nSave\nApply\nFounding Designer\nA Vinyl Bar in Shibuya \u2022 In office \u2022 New York City \u2022 $95k \u2013 $175k \u2022 4 weeks ago\nSave\nApply\nData and Analytics jobs\nView all data and analytics jobs\nJunior Data Engineer\nHealth-Tech Software Boutique \u2022 Remote only \u2022 Everywhere \u2022 $50k \u2013 $90k \u2022 No equity \u2022 2 days ago\nSave\nApply\nSenior Data Engineer\nRhythm Energy \u2022 Remote only \u2022 United States \u2022 $140k \u2013 $160k \u2022 No equity \u2022 2 days ago\nSave\nApply\nSenior Software Engineer - Data\nSymmetric Health Solutions \u2022 Remote only \u2022 United States \u2022 $140k \u2013 $180k \u2022 No equity \u2022 3 days ago\nSave\nApply\nSenior Data Platform Engineer\nnOps \u2022 Remote only \u2022 United States \u2022 $175k \u2013 $200k \u2022 7 days ago\nSave\nApply\nBACKEND-DATABASE ENGINEER\nREcollab \u2022 Onsite or remote \u2022 Chattanooga \u2022 +1 more \u2022 $80k \u2013 $105k \u2022 0.25% \u2013 0.75% \u2022 1 week ago\nSave\nApply\nSales jobs\nView all sales jobs\nSales Engineer\nLuma Health \u2022 Remote \u2022 $120k \u2013 $140k \u2022 yesterday\nSave\nApply\nSales Associate \u2013 Peak Saunas (Remote, U.S. Only)\nPeak Saunas \u2022 Remote only \u2022 United States \u2022 $60k \u2013 $110k \u2022 No equity \u2022 1 day ago\nSave\nApply\nBusiness Development Associate\nQuinncia \u2022 In office \u2022 Somerville \u2022 $80k \u2013 $140k \u2022 No equity \u2022 1 day ago\nSave\nApply\nSales Development Representative\nWrenchwriter \u2022 Remote only \u2022 United States \u2022 $60k \u2013 $70k \u2022 No equity \u2022 2 days ago\nSave\nApply\nSolar & Home Improvement Sales Rep \u2014 $15/hr Base + Uncapped Commission\nJackson Energy & Construction Solutions \u2022 Onsite or remote \u2022 Chicago \u2022 +1 more \u2022 $31k \u2013 $111k \u2022 No equity \u2022 2 days ago\nSave\nApply\nMarketing jobs\nView all marketing jobs\nHead of Marketing\nMighty \u2022 Remote only \u2022 United States \u2022 $175k \u2013 $200k \u2022 No equity \u2022 1 day ago\nSave\nApply\nReal Estate Agents & Brokers \u2013 Earn Additional Income Between Closings\nrealOestate \u2022 Onsite or remote \u2022 Englewood Cliffs \u2022 +1 more \u2022 $150k \u2013 $230k \u2022 0.1% \u2013 0.5% \u2022 1 day ago\nSave\nApply\nB2B Content Manager\nInfluee \u2022 Remote only \u2022 Europe \u2022 \u20ac42k \u2013 \u20ac66k \u2022 No equity",
+  "screenshot": "artifacts/658d7f4e-7e1b-4e72-957f-04c7f5c64c54/recon.png"
+ },
+ "plan": {
+  "steps": [
+   {
+    "id": 1,
+    "action": "navigate",
+    "target": "https://wellfound.com/jobs",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Navigate to the exact website URL for the job search page."
+   },
+   {
+    "id": 2,
+    "action": "assert",
+    "target": "Find Startup Jobs Near You and Remote Jobs | Wellfound",
+    "value": "Find Startup Jobs Near You and Remote Jobs | Wellfound",
+    "expected": "",
+    "assertion_type": "title",
+    "reason": "Verifies the correct page title loads."
+   },
+   {
+    "id": 3,
+    "action": "assert",
+    "target": "OVER 130K REMOTE & LOCAL STARTUP JOBS",
+    "value": "",
+    "expected": "OVER 130K REMOTE & LOCAL STARTUP JOBS",
+    "assertion_type": "visible",
+    "reason": "Verifies the main job count heading renders."
+   },
+   {
+    "id": 4,
+    "action": "fill",
+    "target": "Your Email",
+    "value": "{{TEST_EMAIL}}",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Fills the email input field to test form handling."
+   },
+   {
+    "id": 5,
+    "action": "click",
+    "target": "Search",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Triggers the search action to test interactivity."
+   },
+   {
+    "id": 6,
+    "action": "assert",
+    "target": "Trending startup jobs",
+    "value": "",
+    "expected": "Trending startup jobs",
+    "assertion_type": "visible",
+    "reason": "Verifies search results section loads after action."
+   },
+   {
+    "id": 7,
+    "action": "click",
+    "target": "AlwayzON",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": "Navigates to a specific company profile."
+   },
+   {
+    "id": 8,
+    "action": "assert",
+    "target": "5 open positions",
+    "value": "",
+    "expected": "5 open positions",
+    "assertion_type": "visible",
+    "reason": "Objective success: confirms the app page element is reachable to find any jobs without app bugs."
+   }
+  ]
+ },
+ "expect": {
+  "approved": false,
+  "min_groundedness": 0.0
+ }
+}

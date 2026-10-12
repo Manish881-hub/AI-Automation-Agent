@@ -1,0 +1,106 @@
+{
+ "id": "demo-rejected-500e",
+ "run_prefix": "500e5cec",
+ "objective": "verify that a user can sign in and reach the dashboard",
+ "allowed_url": "http://localhost:8921/",
+ "snapshot": {
+  "url": "http://localhost:8921/",
+  "title": "Acme Portal \u2014 Sign in",
+  "headings": [
+   "Welcome back"
+  ],
+  "links": [],
+  "buttons": [
+   "Sign in",
+   "Forgot password?",
+   "Create account"
+  ],
+  "inputs": [
+   {
+    "label": "Email",
+    "name": "email",
+    "type": "email",
+    "placeholder": "you@company.com"
+   },
+   {
+    "label": "Password",
+    "name": "password",
+    "type": "password",
+    "placeholder": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+   }
+  ],
+  "forms": [
+   {
+    "action": "",
+    "fields": [
+     "email",
+     "password"
+    ]
+   }
+  ],
+  "visible_text": "Welcome back\n\nSign in to reach your dashboard.\n\nEmail\nPassword\nSign in\nForgot password?\nCreate account",
+  "screenshot": "artifacts/500e5cec-29a3-496e-a8d6-c48ba9f874a5/recon.png"
+ },
+ "plan": {
+  "steps": [
+   {
+    "id": 1,
+    "action": "navigate",
+    "target": "http://localhost:8921/",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 2,
+    "action": "assert",
+    "target": "",
+    "value": "Acme Portal \u2014 Sign in",
+    "expected": "",
+    "assertion_type": "title",
+    "reason": ""
+   },
+   {
+    "id": 3,
+    "action": "fill",
+    "target": "Email",
+    "value": "{{TEST_EMAIL}}",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 4,
+    "action": "fill",
+    "target": "Password",
+    "value": "{{TEST_PASSWORD}}",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 5,
+    "action": "click",
+    "target": "Sign in",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 6,
+    "action": "assert",
+    "target": "",
+    "value": "",
+    "expected": "",
+    "assertion_type": "http_success",
+    "reason": ""
+   }
+  ]
+ },
+ "expect": {
+  "approved": false,
+  "min_groundedness": 0.0
+ }
+}

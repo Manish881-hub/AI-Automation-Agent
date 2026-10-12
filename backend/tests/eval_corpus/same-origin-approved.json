@@ -1,0 +1,53 @@
+{
+ "id": "same-origin-approved",
+ "run_prefix": "0efb635c",
+ "objective": "verify that the homepage loads and contains the expected Example Domain text",
+ "allowed_url": "https://x.com/ManishBhakti",
+ "snapshot": {
+  "url": "https://x.com/ManishBhakti",
+  "title": "",
+  "headings": [],
+  "links": [],
+  "buttons": [],
+  "inputs": [],
+  "forms": [],
+  "visible_text": "",
+  "screenshot": "artifacts/0efb635c-9b37-4711-9dc3-2d9b738b3704/recon.png"
+ },
+ "plan": {
+  "steps": [
+   {
+    "id": 1,
+    "action": "navigate",
+    "target": "https://x.com/ManishBhakti",
+    "value": "",
+    "expected": "",
+    "assertion_type": null,
+    "reason": ""
+   },
+   {
+    "id": 2,
+    "action": "assert",
+    "target": "https://x.com/ManishBhakti",
+    "value": "",
+    "expected": "",
+    "assertion_type": "url",
+    "reason": ""
+   },
+   {
+    "id": 3,
+    "action": "assert",
+    "target": "Example Domain",
+    "value": "",
+    "expected": "",
+    "assertion_type": "text",
+    "reason": ""
+   }
+  ]
+ },
+ "expect": {
+  "approved": true,
+  "min_groundedness": 0.0
+ },
+ "notes": "Historical ad-hoc run that genuinely targeted x.com: same-origin for its own URL, so it validates. Origin-violation rejection is covered by the synthetic case origin-violation-rejected."
+}
