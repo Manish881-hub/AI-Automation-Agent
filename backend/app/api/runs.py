@@ -47,9 +47,17 @@ async def create_run(request: Request, body: TestRunRequest):
     require_approval(request)
     # body.url is already normalized by TestRunRequest validation;
     # normalize again defensively (idempotent) before storing.
-    run = orchestrator.create_run(normalize_url(str(body.url)), body.objective)
+    try:
+        run = orchestrator.create_run(
+            normalize_url(str(body.url)), body.objective,
+            workspace=body.workspace,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     asyncio.create_task(orchestrator.execute(run.run_id))
-    return TestRunResponse(run_id=run.run_id, status=run.status, objective=run.objective, url=run.url)
+    return TestRunResponse(run_id=run.run_id, status=run.status,
+                           objective=run.objective, url=run.url,
+                           workspace_name=run.workspace_name)
 
 
 @router.get("/{run_id}", response_model=TestRunResponse)
@@ -79,6 +87,7 @@ async def get_run(run_id: str, request: Request):
         fix_explanation=run.fix_explanation,
         fix_branch=run.fix_branch,
         fix_diff=run.fix_diff,
+        workspace_name=run.workspace_name,
     )
 
 

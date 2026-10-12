@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,9 +14,18 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     test_email: str = "test@example.com"
     test_password: str = "Test1234!"
-    # White-box fix loop: workspace the codebase tools may inspect.
+    # White-box fix loop: default workspace the codebase tools may inspect.
     # Writes apply only through the human approval gate.
     workspace_root: str = "."
+    # Origin served by the default workspace app (used to refuse proposals
+    # for runs targeting a different application — the fixer must never
+    # patch app B for app A's failure).
+    workspace_origin: str = "http://localhost:8921"
+    # Named extra workspaces: {"name": {"root": "/abs/path", "origin":
+    # "http://app-origin"}}. Select per run via the `workspace` request
+    # field; unknown names are rejected. Both root (existing directory) and
+    # origin (for the mismatch guard) are required — fail closed otherwise.
+    workspace_allowlist: dict[str, dict[str, str]] = {}
     fix_enabled: bool = True
     test_timeout_sec: int = 180
     # Human-approval authorization: approve/reject require this value via
@@ -63,3 +74,29 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def resolve_workspace(name: str | None) -> tuple[str, str, str, dict[str, str]]:
+    """Resolve a run's workspace selection to (entry, root, origin, creds).
+
+    None/"default" selects the configured default workspace. Named entries
+    come only from the server-side allowlist — clients can never pass an
+    arbitrary path — and require both an existing root directory and a
+    declared origin, otherwise resolution fails closed. Optional
+    test_email/test_password keys give the workspace a dedicated test
+    account (never logged); without them the global demo credentials apply.
+    """
+    if not name or name == "default":
+        return "default", settings.workspace_root, settings.workspace_origin, {}
+    entry = settings.workspace_allowlist.get(name)
+    if not isinstance(entry, dict) or not entry.get("root") or not entry.get("origin"):
+        raise ValueError(f"unknown or incomplete workspace {name!r}")
+    if not Path(entry["root"]).is_dir():
+        raise ValueError(f"workspace {name!r} root is not a directory")
+    creds = {
+        token: secret for token, secret in (
+            ("{{TEST_EMAIL}}", entry.get("test_email", "")),
+            ("{{TEST_PASSWORD}}", entry.get("test_password", "")),
+        ) if secret
+    }
+    return name, entry["root"], entry["origin"], creds

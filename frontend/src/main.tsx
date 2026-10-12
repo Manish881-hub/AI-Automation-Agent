@@ -39,6 +39,7 @@ type Run = {
 function App() {
   const [url, setUrl] = useState('https://example.com')
   const [objective, setObjective] = useState('verify that the homepage loads and contains the expected Example Domain text')
+  const [workspace, setWorkspace] = useState('')
   const [run, setRun] = useState<Run | null>(null)
   const [events, setEvents] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
@@ -137,7 +138,7 @@ function App() {
     try {
       const res = await fetch(apiUrl('/api/runs'), sameOriginRequest({
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url, objective})
+        body: JSON.stringify({url, objective, workspace: workspace || undefined})
       }))
       if (res.status === 401) {
         setAuthed(false)
@@ -189,6 +190,7 @@ function App() {
       <form onSubmit={startRun}>
         <label>client website<input value={url} onChange={e => setUrl(e.target.value)} /></label>
         <label>test objective<textarea value={objective} onChange={e => setObjective(e.target.value)} /></label>
+        <label>code workspace (optional name from server allowlist)<input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="default" /></label>
         <button disabled={loading}>{loading ? 'starting…' : 'run autonomous test'}</button>
       </form>
     </section>

@@ -242,10 +242,11 @@ def test_authenticated_run_creation_wiring(monkeypatch):
     created: list[str] = []
 
     class FakeOrchestrator:
-        def create_run(self, url, objective):
+        def create_run(self, url, objective, workspace=None):
             created.append(url)
             return SimpleNamespace(run_id="r-1", status="queued",
-                                   objective=objective, url=url)
+                                   objective=objective, url=url,
+                                   workspace_name=workspace or "default")
 
         async def execute(self, run_id):
             return None

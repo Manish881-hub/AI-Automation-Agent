@@ -17,7 +17,12 @@ Rules:
   {{TEST_PASSWORD}} as the value; use real visible text for anything else.
 - For assert, set assertion_type explicitly: text (default), visible,
   url, title, element, no_console_error, or http_success. Use url/title
-  assertions for navigation outcomes, visible for element presence."""
+  assertions for navigation outcomes, visible for element presence.
+- Assert only what you observed: expected text must come from the website
+  context or the flow you just planned, and the final assert must verify
+  the LOGGED-IN outcome when the objective needs authentication — never
+  invent copy, and never assert dashboard content without a preceding
+  login sequence that reaches it."""
 
 REVISION_SYSTEM_PROMPT = """You are a senior QA automation planner revising a rejected test plan.
 Return JSON matching the requested schema: the FULL corrected plan, at most 8 steps.

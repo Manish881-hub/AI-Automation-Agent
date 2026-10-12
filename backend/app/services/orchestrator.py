@@ -3,6 +3,7 @@ import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 from ..agents.planner import PlannerAgent
 from ..agents.plan_validator import PlanValidatorAgent
@@ -20,7 +21,7 @@ from ..services.llm import (
     LLM, BudgetExhausted, CallBudget,
     describe_provider_error, is_infrastructure_error,
 )
-from ..config import settings
+from ..config import resolve_workspace, settings
 from ..tools.browser import BrowserTool
 from ..tools.codebase import CodebaseTool
 from ..tools.sandbox import DockerServerRunner, SandboxUnavailable, docker_available
@@ -123,6 +124,15 @@ class RunState:
     # branch is kept). Empty until a human approves — proposals never
     # create checkouts.
     fix_worktree: str = ""
+    # Codebase selection for this run (server-side registry; clients name
+    # an entry, never a path). All source search, patching, testing, and
+    # worktrees operate inside workspace_root — never another app's repo.
+    workspace_name: str = "default"
+    workspace_root: str = ""
+    workspace_origin: str = ""
+    # This workspace's dedicated test-account secrets (possibly empty).
+    # Memory-only: never serialized into responses, history, or artifacts.
+    workspace_credentials: dict = field(default_factory=dict)
     # Cooperative cancellation: the endpoint sets both; stage boundaries
     # raise RunCancelled on the flag, blocking calls (pytest) poll the
     # event. Never serialized — in-memory control plane only.
@@ -145,10 +155,32 @@ class Orchestrator:
         self.runs: dict[str, RunState] = {}
         self.llm = LLM()
 
-    def create_run(self, url: str, objective: str) -> RunState:
-        run = RunState(run_id=str(uuid4()), url=url, objective=objective)
+    def create_run(
+        self, url: str, objective: str, workspace: str | None = None
+    ) -> RunState:
+        entry, root, origin, creds = resolve_workspace(workspace)
+        run = RunState(
+            run_id=str(uuid4()), url=url, objective=objective,
+            workspace_name=entry, workspace_root=root, workspace_origin=origin,
+            workspace_credentials={
+                token: secret for token, secret in creds.items() if secret
+            },
+        )
         self.runs[run.run_id] = run
         return run
+
+    @staticmethod
+    def run_credentials(run: RunState) -> dict[str, str]:
+        """Placeholder mapping for browser fills: the run workspace's
+        dedicated test account where configured, else the global demo
+        credentials resolved lazily by the agent. Secrets stay in memory —
+        plans and artifacts only ever carry the {{...}} placeholders."""
+        creds = dict(run.workspace_credentials)
+        if not creds.get("{{TEST_EMAIL}}"):
+            creds["{{TEST_EMAIL}}"] = settings.test_email
+        if not creds.get("{{TEST_PASSWORD}}"):
+            creds["{{TEST_PASSWORD}}"] = settings.test_password
+        return creds
 
     @staticmethod
     def _record(run: RunState, session: Session, agent: str, event: str, detail: str = "") -> None:
@@ -297,7 +329,7 @@ class Orchestrator:
                 screenshot = str(run_dir(run.run_id) / f"step_{step.id}.png")
                 try:
                     result = await asyncio.wait_for(
-                        browser_agent.execute(browser, step, screenshot),
+                        browser_agent.execute(browser, step, screenshot, self.run_credentials(run)),
                         timeout=STEP_TIMEOUT_SEC,
                     )
                 except asyncio.TimeoutError:
@@ -345,7 +377,7 @@ class Orchestrator:
                         )
                         try:
                             result = await asyncio.wait_for(
-                                browser_agent.execute(browser, retry_step, retry_shot),
+                                browser_agent.execute(browser, retry_step, retry_shot, self.run_credentials(run)),
                                 timeout=STEP_TIMEOUT_SEC,
                             )
                             result = result.model_copy(update={
@@ -620,7 +652,7 @@ class Orchestrator:
         """Bounded, read-only source search for the diagnosis fan-out."""
         assert run.analysis is not None
         agent = CodebaseAgent()
-        tool = CodebaseTool(settings.workspace_root)
+        tool = CodebaseTool(run.workspace_root or settings.workspace_root)
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(agent.investigate, tool, run.results, run.analysis),
@@ -628,6 +660,33 @@ class Orchestrator:
             )
         except asyncio.TimeoutError as exc:
             raise RuntimeError("source search timed out") from exc
+
+    @staticmethod
+    def _origin_of(url: str) -> str:
+        try:
+            parsed = urlparse((url or "").strip())
+        except ValueError:
+            return ""
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        try:
+            port = parsed.port
+        except ValueError:
+            return ""
+        suffix = f":{port}" if port and port not in (80, 443) else ""
+        return f"{parsed.scheme}://{parsed.hostname.lower()}{suffix}"
+
+    @classmethod
+    def _workspace_matches_run(cls, run: RunState) -> bool:
+        """The run's target must be served by the run's workspace app.
+
+        Without this, a failure in app B searched against app A's repo can
+        produce a plausible-looking but wrong-application patch. Empty
+        workspace origin fails closed.
+        """
+        if not run.workspace_origin:
+            return False
+        return cls._origin_of(run.url) == cls._origin_of(run.workspace_origin)
 
     async def _propose_fix(
         self, run: RunState, session: Session, context: dict | None = None
@@ -640,7 +699,7 @@ class Orchestrator:
         """
         throw_if_cancelled(run, "fix_proposal")
         fixer = FixerAgent()
-        tool = CodebaseTool(settings.workspace_root)
+        tool = CodebaseTool(run.workspace_root or settings.workspace_root)
         cached_context = context is not None
         if context is None:
             self._record(run, session, "codebase", "tool_call", "locate failure code")
@@ -658,6 +717,16 @@ class Orchestrator:
                 ", ".join(files) if files else "no files located",
             )
         if not files:
+            return
+        if not self._workspace_matches_run(run):
+            reason = (
+                f"run targets {run.url} but workspace "
+                f"{run.workspace_name!r} serves {run.workspace_origin or 'an unknown origin'}; "
+                "refusing to propose a cross-application patch"
+            )
+            run.fix_status = "workspace_mismatch"
+            run.fix_explanation = reason
+            self._record(run, session, "fixer", "workspace_mismatch", reason[:300])
             return
         failure_summary = (
             (run.analysis.summary or "")
@@ -750,7 +819,7 @@ class Orchestrator:
         self._record(run, session, "fixer", "fix_approved", "isolating a worktree")
         try:
             throw_if_cancelled(run, "apply")
-            ws_root = Path(settings.workspace_root).resolve()
+            ws_root = Path(run.workspace_root or settings.workspace_root).resolve()
             repo = repo_toplevel(ws_root)
             if repo is None:
                 raise WorktreeError("workspace is not inside a git repository; refusing")
@@ -872,7 +941,7 @@ class Orchestrator:
         if not raw:
             return
         try:
-            repo = repo_toplevel(Path(settings.workspace_root).resolve())
+            repo = repo_toplevel(Path(run.workspace_root or settings.workspace_root).resolve())
             if repo is None:
                 return
             removed = remove_worktree(
@@ -905,7 +974,7 @@ class Orchestrator:
         """This run's isolated workspace root, or None before approval."""
         if not (run.fix_worktree or "").strip():
             return None
-        ws_root = Path(settings.workspace_root).resolve()
+        ws_root = Path(run.workspace_root or settings.workspace_root).resolve()
         repo = repo_toplevel(ws_root)
         if repo is None:
             return None
@@ -982,7 +1051,7 @@ class Orchestrator:
                 shot = str(run_dir(run.run_id) / f"verify_step_{step.id}.png")
                 try:
                     result = await asyncio.wait_for(
-                        browser_agent.execute(browser, step, shot),
+                        browser_agent.execute(browser, step, shot, self.run_credentials(run)),
                         timeout=STEP_TIMEOUT_SEC,
                     )
                 except asyncio.TimeoutError:

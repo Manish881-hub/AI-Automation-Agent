@@ -20,6 +20,9 @@ def normalize_url(url: str) -> str:
 class TestRunRequest(BaseModel):
     url: HttpUrl
     objective: str = Field(min_length=5, max_length=2000)
+    # Workspace selection by server-side registry name (never a path).
+    # None/"default" uses the configured default workspace.
+    workspace: str | None = None
 
     @field_validator("url", mode="before")
     @classmethod
@@ -153,6 +156,31 @@ class RecoveryDecision(BaseModel):
     target: str = ""
     reason: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_model_synonyms(cls, data):
+        # Cheap models wrap the action in {"decision": ...} or name the
+        # target "label". Map those shapes instead of aborting recovery on
+        # schema pedantry (an unparsable reply previously killed retries).
+        if isinstance(data, dict):
+            data = dict(data)
+            if "action" not in data:
+                for key in ("decision", "choice", "recovery_action"):
+                    if data.get(key) not in (None, ""):
+                        data["action"] = data[key]
+                        break
+            if not data.get("target"):
+                for key in ("label", "selector", "alternate_target"):
+                    if data.get(key) not in (None, ""):
+                        data["target"] = data[key]
+                        break
+            if not data.get("reason"):
+                for key in ("explanation", "detail", "message"):
+                    if data.get(key) not in (None, ""):
+                        data["reason"] = _as_text(data[key])
+                        break
+        return data
+
 
 class PatchEdit(BaseModel):
     """One structured source edit: replace exactly one occurrence of
@@ -279,4 +307,5 @@ class TestRunResponse(BaseModel):
     fix_verify_summary: str = ""
     fix_explanation: str = ""
     fix_branch: str = ""
+    workspace_name: str = "default"
     fix_diff: str = ""

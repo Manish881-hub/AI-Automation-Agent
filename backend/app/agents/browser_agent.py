@@ -4,15 +4,24 @@ from ..tools.browser import BrowserTool
 from .validator import ValidatorAgent
 
 
-# Demo-only seeded credentials (browser-qa: never real production logins).
+# Seeded test credentials (browser-qa: never real production logins).
+# Resolved per run: a workspace may declare its own dedicated test account,
+# otherwise the global demo credentials apply. Values only ever enter the
+# browser fill call — plans, events, and artifacts keep the placeholders.
 PLACEHOLDERS = {
     "{{TEST_EMAIL}}": lambda: settings.test_email,
     "{{TEST_PASSWORD}}": lambda: settings.test_password,
 }
 
 
-def resolve_placeholders(value: str) -> str:
-    for token, lookup in PLACEHOLDERS.items():
+def resolve_placeholders(
+    value: str, credentials: dict[str, str] | None = None
+) -> str:
+    lookups = dict(PLACEHOLDERS)
+    for token, secret in (credentials or {}).items():
+        if token in PLACEHOLDERS:
+            lookups[token] = lambda secret=secret: secret
+    for token, lookup in lookups.items():
         if token in value:
             value = value.replace(token, lookup())
     return value
@@ -26,7 +35,10 @@ class BrowserAgent:
     def __init__(self) -> None:
         self.validator = ValidatorAgent()
 
-    async def execute(self, browser: BrowserTool, step: TestStep, screenshot_path: str) -> StepResult:
+    async def execute(
+        self, browser: BrowserTool, step: TestStep, screenshot_path: str,
+        credentials: dict[str, str] | None = None,
+    ) -> StepResult:
         try:
             visible_check: bool | None = None
             if step.action == "navigate":
@@ -34,7 +46,8 @@ class BrowserAgent:
             elif step.action == "click":
                 await browser.click(step.target)
             elif step.action == "fill":
-                await browser.fill(step.target, resolve_placeholders(step.value))
+                await browser.fill(
+                    step.target, resolve_placeholders(step.value, credentials))
             elif step.action == "press":
                 await browser.press(step.target or "body", step.value)
             elif step.action == "assert":

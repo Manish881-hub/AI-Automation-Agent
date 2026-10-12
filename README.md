@@ -176,6 +176,19 @@ Evidence for the reference run lives under
   runs (e.g. the golden test) must sign in through the UI before the
   approval click.
 
+### Codebase workspaces (per-run selection)
+
+- Runs select source by server-side registry name (`workspace` field, or
+  the UI input; default serves `WORKSPACE_ORIGIN`). Extra apps map in
+  `WORKSPACE_ALLOWLIST` as `{"name": {"root": "/abs/path",
+  "origin": "http://app-origin"}}`. Clients can never pass a path, and
+  unknown names are rejected with 422.
+- Before any proposal, the fixer verifies the run's target origin matches
+  the workspace's served origin. On mismatch the fix parks as
+  `workspace_mismatch` with the reason shown — no patch is proposed, built,
+  or applied. This is what stops an Acme-demo patch from being generated
+  for another application's failure.
+
 ## Engineering notes
 
 - **Nested-workspace `git apply` scoping** (`backend/app/tools/codebase.py`):
