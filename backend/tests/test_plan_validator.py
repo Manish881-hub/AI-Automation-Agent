@@ -47,6 +47,21 @@ def test_final_assert_without_any_signal_still_rejected():
     assert any("objective signals" in r for r in validation.reasons)
 
 
+def test_bare_step_dict_coerced_to_plan():
+    plan = TestPlan.model_validate(
+        {"action": "navigate", "target": "http://localhost:8921/"})
+    assert [s.id for s in plan.steps] == [1]
+    assert plan.steps[0].action == "navigate"
+
+
+def test_bare_steps_list_coerced_to_plan():
+    plan = TestPlan.model_validate([
+        {"action": "navigate", "target": "http://localhost:8921/"},
+        {"action": "assert", "assertion_type": "visible", "target": "Welcome"},
+    ])
+    assert [s.id for s in plan.steps] == [1, 2]
+
+
 def test_final_assert_on_error_state_still_rejected():
     plan = _plan({
         "action": "assert", "assertion_type": "text",

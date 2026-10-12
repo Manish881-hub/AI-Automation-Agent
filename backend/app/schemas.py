@@ -55,8 +55,13 @@ class TestPlan(BaseModel):
     @classmethod
     def _unwrap_step_items(cls, data):
         # Accept [{"step": {...}}] as well as [{...}], a wrapping
-        # {"test_plan" | "plan": {...}} envelope, or a bare steps list
-        # stored under any key (cheap models rename "steps" to "plan").
+        # {"test_plan" | "plan": {...}} envelope, a bare steps list, a bare
+        # single step dict, or a bare steps list stored under any key
+        # (cheap models rename "steps" to "plan", or forget the wrapper).
+        if isinstance(data, list):
+            data = {"steps": data}
+        elif isinstance(data, dict) and "action" in data and "steps" not in data:
+            data = {"steps": [data]}
         if isinstance(data, dict):
             if "steps" not in data:
                 for key in ("test_plan", "plan", "testPlan"):

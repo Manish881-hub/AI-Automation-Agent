@@ -210,6 +210,21 @@ def test_timeout_is_infrastructure_failure():
     assert run.objective_status == "unknown"
 
 
+def test_malformed_plan_message_actionable():
+    from pydantic import ValidationError
+
+    from app.schemas import TestPlan
+    try:
+        TestPlan.model_validate({"nonsense": True})
+    except ValidationError as exc:
+        msg = describe_provider_error(exc)
+    else:
+        raise AssertionError("should not parse")
+    assert "test-plan schema" in msg
+    assert "website under test did not" in msg
+    assert "pydantic.dev" not in msg
+
+
 def test_terminal_message_redacts_secrets():
     msg = describe_provider_error(RuntimeError("provider blew up sk-or-v1-abcdefg123456"))
     assert "sk-or-v1" not in msg

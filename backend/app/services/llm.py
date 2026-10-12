@@ -12,7 +12,7 @@ from openai import (
     InternalServerError,
     RateLimitError,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from ..config import settings
 from ..tools.codebase import redact_secrets
 
@@ -91,6 +91,12 @@ def describe_provider_error(exc: BaseException) -> str:
     (infrastructure, not the website under test), and what to do next.
     """
     status = getattr(exc, "status_code", None)
+    if isinstance(exc, ValidationError):
+        return (
+            "Planner returned output that does not match the test-plan "
+            "schema after shape coercion. The website under test did not "
+            "fail; retry the run — a rephrased plan usually parses."
+        )
     if isinstance(exc, BudgetExhausted):
         # Policy stop carries its own actionable wording; keep it verbatim.
         return redact_secrets(str(exc))[:500] or "LLM budget exhausted"
